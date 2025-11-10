@@ -5,8 +5,15 @@ python-docx>=0.8.11
 tqdm>=4.65.0
 numpy>=1.24.0
 
+# Web UI
+Flask>=2.0.0
+
 # LLM
 llama-cpp-python>=0.2.20
 
+# PDF parsing
+pdfplumber>=0.7.6
+
 # Опциональные для улучшения
 XlsxWriter>=3.1.0
+

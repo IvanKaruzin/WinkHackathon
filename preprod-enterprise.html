@@ -832,24 +832,52 @@
             }
         }
 
-        function handleFileSelect(event) {
+        async function handleFileSelect(event) {
             const files = event.target.files;
-            if (files.length > 0) {
-                const file = files[0];
-                const dropZone = document.getElementById('dropZone');
-                dropZone.innerHTML = `
-                    <div class="drop-icon">✅</div>
-                    <h3>Файл загружен</h3>
-                    <p>${file.name}</p>
-                    <p style="font-size: 0.85rem; color: var(--text-light);">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                `;
-                
-                // Show results after a delay
-                setTimeout(() => {
-                    document.getElementById('results').classList.add('active');
-                    document.getElementById('export').classList.add('active');
-                    document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 1000);
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            const dropZone = document.getElementById('dropZone');
+            dropZone.innerHTML = `
+                <div class="drop-icon">⏳</div>
+                <h3>Файл выбран</h3>
+                <p>${file.name}</p>
+                <p style="font-size: 0.85rem; color: var(--text-light);">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
+            `;
+
+            // Auto-select a template if none selected
+            if (!selectedTemplate) {
+                selectedTemplate = 'basic';
+                const firstCard = document.querySelector('.template-card');
+                if (firstCard) firstCard.classList.add('selected');
+            }
+
+            // Upload file to backend
+            const form = new FormData();
+            form.append('file', file);
+            form.append('template', selectedTemplate || 'basic');
+            form.append('use_llm', document.getElementById('cat-effects').checked ? 'true' : 'false');
+
+            // Show loading
+            const processBtn = document.querySelector('.customization-section .hero-button');
+            const prevText = processBtn.innerHTML;
+            processBtn.disabled = true;
+            processBtn.innerHTML = '<span class="loading"></span> Обработка...';
+
+            try {
+                const resp = await fetch('/api/upload', { method: 'POST', body: form });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert('Ошибка загрузки: ' + (err.error || resp.statusText));
+                    return;
+                }
+                const data = await resp.json();
+                renderResults(data);
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка при загрузке файла');
+            } finally {
+                processBtn.disabled = false;
+                processBtn.innerHTML = prevText;
             }
         }
 
@@ -859,24 +887,87 @@
             selectedTemplate = templateType;
         }
 
+        // processFile is kept to allow manual start if user prefers (it triggers file input)
         function processFile() {
-            if (selectedTemplate) {
-                alert(`Обработка файла с шаблоном: ${selectedTemplate}`);
-                document.getElementById('results').classList.add('active');
-                document.getElementById('export').classList.add('active');
-                document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const input = document.getElementById('fileInput');
+            if (input.files && input.files.length > 0) {
+                handleFileSelect({ target: input });
             } else {
-                alert('Пожалуйста, выберите шаблон анализа');
+                alert('Пожалуйста, выберите файл в разделе загрузки');
             }
         }
 
-        function exportFile(format) {
-            const formats = {
-                csv: 'table_export.csv',
-                xlsx: 'table_export.xlsx',
-                json: 'table_export.json'
-            };
-            alert(`Файл сохранен как: ${formats[format]}`);
+        async function exportFile(format) {
+            // Request server to prepare download
+            try {
+                const resp = await fetch('/api/download?format=' + encodeURIComponent(format));
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert('Экспорт не удался: ' + (err.error || resp.statusText));
+                    return;
+                }
+
+                if (format === 'json' || resp.headers.get('content-type')?.includes('application/json')) {
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'production_table.' + (format === 'json' ? 'json' : 'txt');
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    alert('Экспорт JSON завершён');
+                    return;
+                }
+
+                // For binary downloads (csv/xlsx)
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = format === 'csv' ? 'production_table.csv' : 'production_table.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка при экспорте');
+            }
+        }
+
+        function renderResults(data) {
+            // Activate results and export sections
+            document.getElementById('results').classList.add('active');
+            document.getElementById('export').classList.add('active');
+
+            // Render stats
+            if (data.stats) {
+                const statCards = document.querySelectorAll('.results-stats .stat-card');
+                if (statCards[0]) statCards[0].querySelector('.stat-number').textContent = data.stats.total_scenes || 0;
+                if (statCards[1]) statCards[1].querySelector('.stat-number').textContent = data.stats.unique_locations || 0;
+                if (statCards[2]) statCards[2].querySelector('.stat-number').textContent = (data.stats.top_characters || []).length;
+            }
+
+            // Render table
+            const tbody = document.querySelector('.results-table tbody');
+            tbody.innerHTML = '';
+            const rows = data.table || [];
+            rows.forEach((r, i) => {
+                const tr = document.createElement('tr');
+                const sceneTd = document.createElement('td'); sceneTd.className = 'scene-number'; sceneTd.textContent = r['Сцена'] || (i+1);
+                const locTd = document.createElement('td'); locTd.textContent = r['Объект'] || '';
+                const timeTd = document.createElement('td'); timeTd.textContent = r['Режим'] || '';
+                const charsTd = document.createElement('td'); charsTd.textContent = r['Персонажи'] || '';
+                const extrasTd = document.createElement('td'); extrasTd.textContent = r['Массовка'] || '';
+                const propsTd = document.createElement('td'); propsTd.textContent = r['Реквизит'] || '';
+                tr.appendChild(sceneTd); tr.appendChild(locTd); tr.appendChild(timeTd); tr.appendChild(charsTd); tr.appendChild(extrasTd); tr.appendChild(propsTd);
+                tbody.appendChild(tr);
+            });
+
+            // Scroll to results
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     </script>
 </body>
