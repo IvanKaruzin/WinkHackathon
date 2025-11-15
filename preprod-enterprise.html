@@ -661,10 +661,6 @@
                     <label for="cat-effects">Спецэффекты</label>
                 </div>
                 <div class="category-checkbox">
-                    <input type="checkbox" id="cat-makeup">
-                    <label for="cat-makeup">Грим</label>
-                </div>
-                <div class="category-checkbox">
                     <input type="checkbox" id="cat-stunt">
                     <label for="cat-stunt">Каскадеры</label>
                 </div>
@@ -854,8 +850,7 @@
             // Upload file to backend
             const form = new FormData();
             form.append('file', file);
-            form.append('template', selectedTemplate || 'basic');
-            form.append('use_llm', document.getElementById('cat-effects').checked ? 'true' : 'false');
+            form.append('template', selectedTemplate || 'full');
 
             // Show loading
             const processBtn = document.querySelector('.customization-section .hero-button');

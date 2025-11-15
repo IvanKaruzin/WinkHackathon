@@ -166,34 +166,50 @@ class ScenarioParser:
         self._parse_scene_title(scene_title, metadata)
         
         # Извлекаем сущности из результата LLM
-        metadata.location = self._safe_get(result, 'location', '')
+        location = self._safe_get(result, 'location', '')
+        # Дополнительная валидация локации - убираем глаголы
+        metadata.location = self._clean_location(location, result.get('scene_text', ''))
         metadata.sublocation = self._safe_get(result, 'sublocation', '')
         metadata.time_of_day = self._safe_get(result, 'time_of_day', '')
         metadata.scene_type = self._safe_get(result, 'scene_type', '')
         metadata.synopsis = self._safe_get(result, 'synopsis', '')
         
-        # Списки
-        metadata.characters = self._safe_get_list(result, 'characters')
+        # Списки с валидацией
+        metadata.characters = self._clean_characters(self._safe_get_list(result, 'characters'))
         metadata.props = self._safe_get_list(result, 'props')
         metadata.vehicles = self._safe_get_list(result, 'vehicles')
         metadata.special_fx = self._safe_get_list(result, 'vfx')
-        metadata.costumes = self._safe_get_list(result, 'costumes')
+        metadata.costumes = self._clean_costumes(self._safe_get_list(result, 'costumes'))
         metadata.makeup = self._safe_get_list(result, 'makeup')
-        metadata.special_equipment = self._safe_get_list(result, 'special_equipment')
+        metadata.special_equipment = self._clean_equipment(self._safe_get_list(result, 'special_equipment'))
         
         # Массовка
         crowd = self._safe_get(result, 'crowd', '')
         if crowd:
             metadata.extras = crowd
+        
+        # Количество массовки - сначала из crowd_count, потом из crowd
+        crowd_count = self._safe_get(result, 'crowd_count', None)
+        if crowd_count is not None:
+            try:
+                metadata.extras_count = int(crowd_count)
+            except (ValueError, TypeError):
+                metadata.extras_count = 0
+        elif crowd:
             # Пытаемся извлечь число из описания массовки
             import re
-            numbers = re.findall(r'\d+', crowd)
+            # Ищем числа в тексте массовки
+            numbers = re.findall(r'\d+', str(crowd))
             if numbers:
                 try:
+                    # Берем первое найденное число
                     metadata.extras_count = int(numbers[0])
-                except:
+                except (ValueError, TypeError):
                     metadata.extras_count = 0
-        metadata.extras_count = self._safe_get(result, 'crowd_count', metadata.extras_count)
+            else:
+                metadata.extras_count = 0
+        else:
+            metadata.extras_count = 0
         
         # Булевы значения
         metadata.stunts = self._safe_get(result, 'stunts', False)
@@ -258,6 +274,121 @@ class ScenarioParser:
             # Если это строка, пытаемся разбить по запятым
             return [item.strip() for item in value.split(',') if item.strip()]
         return []
+    
+    def _clean_location(self, location: str, scene_text: str) -> str:
+        """Очистка локации от глаголов и действий"""
+        if not location:
+            return location
+        
+        import re
+        # Паттерны глаголов и действий
+        invalid_patterns = [
+            r'отделаются', r'плавают', r'идут', r'стоят', r'сидят',
+            r'бегут', r'говорят', r'смотрят', r'делают', r'находятся'
+        ]
+        
+        location_lower = location.lower()
+        for pattern in invalid_patterns:
+            if re.search(pattern, location_lower):
+                logger.warning(f"Обнаружена некорректная локация: '{location}'. Очищаю...")
+                # Пытаемся найти настоящую локацию в тексте
+                location_match = re.search(
+                    r'(?:ИНТ|ЭКСТ|НАТ|INT|EXT)\.\s*([А-ЯЁ\w\s]+?)(?:\s*[-–—]\s*|\.|$)',
+                    scene_text,
+                    re.IGNORECASE
+                )
+                if location_match:
+                    found = location_match.group(1).strip()
+                    if found and not any(re.search(p, found.lower()) for p in invalid_patterns):
+                        return found
+                return ""  # Если не нашли, возвращаем пустую строку
+        
+        return location
+    
+    def _clean_characters(self, characters: List[str]) -> List[str]:
+        """Очистка персонажей от массовки и глаголов"""
+        if not characters:
+            return characters
+        
+        import re
+        invalid_words = ['толпа', 'массовка', 'люди', 'прохожие', 'студенты', 'официанты']
+        invalid_verbs = [r'плавают', r'идут', r'стоят', r'сидят', r'бегут', r'говорят']
+        
+        cleaned = []
+        for char in characters:
+            char_str = str(char).strip()
+            if not char_str:
+                continue
+            
+            char_lower = char_str.lower()
+            
+            # Пропускаем массовку
+            if any(word in char_lower for word in invalid_words):
+                continue
+            
+            # Пропускаем глаголы
+            if any(re.search(verb, char_lower) for verb in invalid_verbs):
+                continue
+            
+            # Пропускаем слишком длинные "имена"
+            if len(char_str) > 30:
+                continue
+            
+            cleaned.append(char_str)
+        
+        return cleaned
+    
+    def _clean_equipment(self, equipment: List[str]) -> List[str]:
+        """Очистка спецоборудования - только профессиональное съемочное оборудование"""
+        if not equipment:
+            return equipment
+        
+        import re
+        valid_keywords = ['кран', 'дрон', 'стабилизатор', 'тележка', 'журавль', 'микрофон',
+                         'освещение', 'камера', 'оператор', 'съемочн', 'техническ',
+                         'подвес', 'трос', 'подъемник', 'платформа', 'рельс']
+        invalid_patterns = [r'стол', r'стул', r'кровать', r'диван', r'телефон', r'компьютер',
+                           r'книга', r'бумага', r'ручка', r'одежда', r'костюм', r'грим']
+        
+        cleaned = []
+        for item in equipment:
+            item_str = str(item).strip().lower()
+            if not item_str:
+                continue
+            
+            # Пропускаем обычный реквизит
+            if any(re.search(pattern, item_str) for pattern in invalid_patterns):
+                logger.warning(f"Удалено из спецоборудования (это реквизит): '{item}'")
+                continue
+            
+            # Проверяем, что это профессиональное оборудование
+            if any(keyword in item_str for keyword in valid_keywords):
+                cleaned.append(item)
+            else:
+                logger.warning(f"Удалено из спецоборудования (не профессиональное): '{item}'")
+        
+        return cleaned
+    
+    def _clean_costumes(self, costumes: List[str]) -> List[str]:
+        """Очистка костюмов - только конкретные описания"""
+        if not costumes:
+            return costumes
+        
+        costume_keywords = ['костюм', 'платье', 'одежда', 'форма', 'униформа', 'наряд']
+        cleaned = []
+        
+        for costume in costumes:
+            costume_str = str(costume).strip().lower()
+            if not costume_str:
+                continue
+            
+            # Проверяем, что это действительно описание костюма
+            if any(keyword in costume_str for keyword in costume_keywords):
+                cleaned.append(costume)
+            elif len(costume_str) > 5 and costume_str not in ['одежда', 'костюм', 'форма']:
+                cleaned.append(costume)
+        
+        return cleaned
 
 
 # -----------------------------
@@ -399,7 +530,9 @@ def export_to_excel(df: pd.DataFrame, output_path: str):
                 cell.border = thin_border
                 cell.alignment = Alignment(vertical='top', wrap_text=True)
         
-        for row in ws.iter_rows(min_row=4, max_row=ws.max_row, min_col=20, max_col=20):
+        # Колонка "Уверенность" (T = 20)
+        confidence_col = 20
+        for row in ws.iter_rows(min_row=4, max_row=ws.max_row, min_col=confidence_col, max_col=confidence_col):
             for cell in row:
                 if cell.value:
                     try:

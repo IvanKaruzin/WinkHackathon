@@ -198,7 +198,13 @@ class LLMEngine:
                 
                 # Установка pad_token если отсутствует
                 if self.tokenizer.pad_token is None:
-                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                    # Для Llama 3 используем специальный pad token
+                    if 'llama' in model_name.lower() or 'meta-llama' in model_name.lower():
+                        self.tokenizer.add_special_tokens({'pad_token': '<|pad|>'})
+                        if hasattr(self.model, 'resize_token_embeddings'):
+                            self.model.resize_token_embeddings(len(self.tokenizer))
+                    else:
+                        self.tokenizer.pad_token = self.tokenizer.eos_token
                 
                 logger.info("Модель загружена через transformers")
             except Exception as e:
@@ -209,11 +215,21 @@ class LLMEngine:
     
     def _generate_prompt(self, system_prompt: str, user_prompt: str) -> str:
         """Генерация промпта в формате модели"""
-        # Формат для Mistral Instruct
-        return f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
+        model_name = self.config.get('llm', {}).get('model_name', '').lower()
+        
+        # Определяем формат промпта в зависимости от модели
+        if 'llama' in model_name or 'meta-llama' in model_name:
+            # Формат для Llama 3
+            return f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        elif 'mistral' in model_name:
+            # Формат для Mistral Instruct
+            return f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
+        else:
+            # Универсальный формат
+            return f"{system_prompt}\n\n{user_prompt}\n\n"
     
     def _generate_scene_detection_prompt(self, screenplay_text: str) -> str:
-        """Генерация промпта для детекции сцен"""
+        """Генерация промпта для детекции сцен (НЕ ИСПОЛЬЗУЕТСЯ - детекция через regex)"""
         system_prompt = """Ты - эксперт по анализу киносценариев. Твоя задача - точно разделить сценарий на отдельные сцены.
 
 Каждая сцена начинается с заголовка, который содержит:
@@ -267,16 +283,59 @@ class LLMEngine:
                 else:
                     json_schema[entity_name] = ""
         
-        system_prompt = f"""Ты - ассистент продюсера, анализирующий сценарии для кинопроизводства.
-Твоя задача - извлечь точную информацию о производственных требованиях сцены.
+        system_prompt = f"""Ты - профессиональный ассистент продюсера, анализирующий киносценарии для создания календарно-постановочного плана (КПП).
+Твоя задача - точно извлечь информацию о производственных требованиях сцены.
 
 Ты должен извлечь следующие поля:
 {chr(10).join(entity_descriptions)}
 
+ПРИМЕРЫ ПРАВИЛЬНОГО ИЗВЛЕЧЕНИЯ:
+
+1. ЛОКАЦИЯ (location):
+   ✅ ПРАВИЛЬНО: "ИНТ. КВАРТИРА - ДЕНЬ" → location = "квартира"
+   ✅ ПРАВИЛЬНО: "ЭКСТ. УЛИЦА - НОЧЬ" → location = "улица"
+   ✅ ПРАВИЛЬНО: "В бассейне плавают дети" → location = "бассейн"
+   ❌ НЕПРАВИЛЬНО: location = "отделаются дети" (это действие, не локация!)
+   ❌ НЕПРАВИЛЬНО: location = "плавают" (это глагол, не локация!)
+   ВАЖНО: Локация - это МЕСТО (квартира, улица, офис, бассейн), НЕ действие или глагол!
+
+2. ПЕРСОНАЖИ (characters):
+   ✅ ПРАВИЛЬНО: Если в тексте "Иван говорит с Марией" → characters = ["Иван", "Мария"]
+   ✅ ПРАВИЛЬНО: "В бассейне плавают дети" → characters = ["дети"] (если это главные персонажи)
+   ❌ НЕПРАВИЛЬНО: characters = ["толпа", "массовка", "прохожие"] (это массовка, не персонажи!)
+   ❌ НЕПРАВИЛЬНО: characters = ["плавают", "идут"] (это глаголы, не имена!)
+   ВАЖНО: Персонажи - это имена людей или роли (Иван, Мария, режиссер), НЕ массовка и НЕ действия!
+
+3. МАССОВКА (crowd, crowd_count):
+   ✅ ПРАВИЛЬНО: "толпа из 20 человек" → crowd = "толпа прохожих", crowd_count = 20
+   ✅ ПРАВИЛЬНО: "массовка: 15 студентов" → crowd = "студенты", crowd_count = 15
+   ✅ ПРАВИЛЬНО: "официанты (5 чел.)" → crowd = "официанты", crowd_count = 5
+   ❌ НЕПРАВИЛЬНО: crowd_count = "20 человек" (должно быть число 20, без текста!)
+   ВАЖНО: crowd_count - это ТОЛЬКО число (0, 5, 20, 100), без слов "человек", "чел." и т.д.!
+
+4. СПЕЦОБОРУДОВАНИЕ (special_equipment):
+   ✅ ПРАВИЛЬНО: ["кран для камеры", "операторская тележка", "стабилизатор", "дрон"]
+   ✅ ПРАВИЛЬНО: ["микрофон на журавле", "специальное освещение"]
+   ❌ НЕПРАВИЛЬНО: ["стол", "стул", "телефон"] (это реквизит, не оборудование!)
+   ❌ НЕПРАВИЛЬНО: ["костюм", "грим"] (это не оборудование!)
+   ВАЖНО: Только профессиональное СЪЕМОЧНОЕ оборудование (кран, дрон, стабилизатор, тележка, журавль)!
+
+5. КОСТЮМЫ (costumes):
+   ✅ ПРАВИЛЬНО: ["деловой костюм", "вечернее платье", "форма полицейского"]
+   ✅ ПРАВИЛЬНО: ["спортивная одежда", "военная форма"]
+   ❌ НЕПРАВИЛЬНО: ["одежда"] (слишком общее, нужны детали)
+   ❌ НЕПРАВИЛЬНО: ["стандартная одежда"] (если не описано, верни пустой список)
+   ВАЖНО: Только если упомянуты КОНКРЕТНЫЕ детали костюма. Если костюмы стандартные - пустой список!
+
 Отвечай ТОЛЬКО в формате JSON, строго следуя этой структуре:
 {json.dumps(json_schema, ensure_ascii=False, indent=2)}
 
-ВАЖНО:
+КРИТИЧЕСКИ ВАЖНО:
+- Анализируй текст внимательно, не придумывай информацию, которой нет в сцене
+- ЛОКАЦИЯ = место (квартира, улица), НЕ действие (плавают, идут, отделаются)!
+- ПЕРСОНАЖИ = имена людей, НЕ массовка и НЕ глаголы!
+- CROWD_COUNT = только число (20), НЕ текст ("20 человек")!
+- SPECIAL_EQUIPMENT = только съемочное оборудование, НЕ реквизит!
 - Если информация не найдена, используй пустые значения (пустая строка "", пустой список [], false для boolean, 0 для integer)
 - Не добавляй поля, которых нет в схеме
 - Не добавляй комментарии или пояснения
@@ -288,6 +347,12 @@ class LLMEngine:
 
 ТЕКСТ СЦЕНЫ:
 {scene_text}
+
+ПОМНИ:
+- Локация - это МЕСТО (квартира, улица, бассейн), НЕ действие!
+- Персонажи - это ИМЕНА людей, НЕ массовка и НЕ глаголы!
+- crowd_count - это ТОЛЬКО число, без текста!
+- special_equipment - только съемочное оборудование, НЕ реквизит!
 
 Верни JSON с извлеченными данными:"""
 
@@ -302,11 +367,11 @@ class LLMEngine:
             # Использование vllm для батчевой обработки
             gen_params = self.config.get('llm', {}).get('generation', {})
             sampling_params = SamplingParams(
-                max_tokens=gen_params.get('max_new_tokens', 1024),
-                temperature=gen_params.get('temperature', 0.1),
-                top_p=gen_params.get('top_p', 0.95),
+                max_tokens=gen_params.get('max_new_tokens', 2048),
+                temperature=gen_params.get('temperature', 0.05),
+                top_p=gen_params.get('top_p', 0.9),
                 top_k=gen_params.get('top_k', 40),
-                stop=["</s>", "\n\n\n"]
+                stop=["<|eot_id|>", "</s>", "\n\n\n"]
             )
             
             outputs = self.model.generate(prompts, sampling_params)
@@ -328,9 +393,9 @@ class LLMEngine:
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=gen_params.get('max_new_tokens', 1024),
-                    temperature=gen_params.get('temperature', 0.1),
-                    top_p=gen_params.get('top_p', 0.95),
+                    max_new_tokens=gen_params.get('max_new_tokens', 2048),
+                    temperature=gen_params.get('temperature', 0.05),
+                    top_p=gen_params.get('top_p', 0.9),
                     top_k=gen_params.get('top_k', 40),
                     do_sample=gen_params.get('do_sample', True),
                     pad_token_id=self.tokenizer.pad_token_id,
@@ -350,108 +415,218 @@ class LLMEngine:
             
             return responses
     
-    def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """Извлечение JSON из текста ответа модели"""
-        # Ищем JSON в тексте
-        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            try:
-                # Исправляем common issues
-                json_str = json_str.replace("'", '"')
-                json_str = re.sub(r',\s*}', '}', json_str)
-                json_str = re.sub(r',\s*]', ']', json_str)
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Ошибка парсинга JSON: {e}. Текст: {json_str[:200]}")
+    def _extract_json(self, text: str) -> Optional[Any]:
+        """Извлечение JSON из текста ответа модели (может вернуть dict или list)"""
+        # Находим первую открывающую скобку
+        start_idx = -1
+        for i, char in enumerate(text):
+            if char in ['{', '[']:
+                start_idx = i
+                break
         
-        # Попытка найти JSON-массив
-        array_match = re.search(r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]', text, re.DOTALL)
-        if array_match:
-            json_str = array_match.group(0)
+        if start_idx == -1:
+            return None
+        
+        # Балансируем скобки для правильного извлечения
+        bracket = text[start_idx]
+        closing = '}' if bracket == '{' else ']'
+        stack = 1
+        end_idx = start_idx + 1
+        
+        while end_idx < len(text) and stack > 0:
+            if text[end_idx] == bracket:
+                stack += 1
+            elif text[end_idx] == closing:
+                stack -= 1
+            elif text[end_idx] == '"':
+                # Пропускаем строки
+                end_idx += 1
+                while end_idx < len(text) and text[end_idx] != '"':
+                    if text[end_idx] == '\\':
+                        end_idx += 1  # Пропускаем экранированные символы
+                    end_idx += 1
+            end_idx += 1
+        
+        if stack == 0:
+            json_str = text[start_idx:end_idx]
+        else:
+            # Если не удалось найти закрывающую скобку, пробуем найти вручную
+            json_str = text[start_idx:]
+        
+        # Очистка и исправление JSON
+        try:
+            # Убираем trailing commas
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
+            
+            # Исправляем одинарные кавычки в ключах и значениях (но не внутри строк)
+            # Это сложно, поэтому сначала пробуем как есть
             try:
-                json_str = json_str.replace("'", '"')
                 return json.loads(json_str)
             except json.JSONDecodeError:
-                pass
-        
-        return None
+                # Пробуем заменить одинарные кавычки на двойные (осторожно)
+                # Заменяем только те, что не внутри уже двойных кавычек
+                json_str_fixed = json_str
+                # Простая замена одинарных кавычек на двойные для ключей
+                json_str_fixed = re.sub(r"'(\w+)':", r'"\1":', json_str_fixed)
+                # Заменяем одинарные кавычки в значениях строк
+                json_str_fixed = re.sub(r":\s*'([^']*)'", r': "\1"', json_str_fixed)
+                return json.loads(json_str_fixed)
+        except json.JSONDecodeError as e:
+            # Последняя попытка - используем более агрессивную очистку
+            try:
+                # Удаляем комментарии
+                json_str = re.sub(r'//.*?$', '', json_str, flags=re.MULTILINE)
+                json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+                # Исправляем незакрытые строки
+                json_str = re.sub(r'"([^"]*)$', r'"\1"', json_str)
+                return json.loads(json_str)
+            except json.JSONDecodeError as e2:
+                logger.warning(f"Не удалось распарсить JSON: {e2}. Начало текста: {json_str[:300]}")
+                return None
     
     def detect_scenes(self, screenplay_text: str) -> List[SceneDetection]:
-        """Шаг 1: Детекция сцен через LLM"""
-        logger.info("Начинаю детекцию сцен через LLM...")
+        """Шаг 1: Детекция сцен через регулярные выражения (надежнее чем LLM)"""
+        logger.info("Начинаю детекцию сцен через регулярные выражения...")
         
-        # Разбиваем текст на части для обработки (если слишком большой)
-        max_chunk_size = 20000
-        if len(screenplay_text) > max_chunk_size:
-            # Обрабатываем по частям
-            chunks = []
-            for i in range(0, len(screenplay_text), max_chunk_size):
-                chunks.append(screenplay_text[i:i+max_chunk_size])
-        else:
-            chunks = [screenplay_text]
+        # Используем regex-метод как основной (более надежный)
+        all_scenes = self._fallback_scene_detection(screenplay_text)
         
-        all_scenes = []
-        
-        for chunk in chunks:
-            prompt = self._generate_scene_detection_prompt(chunk)
-            response = self._call_model([prompt])[0]
-            
-            # Извлекаем JSON
-            result = self._extract_json(response)
-            
-            if result and isinstance(result, list):
-                for scene_data in result:
-                    scene = SceneDetection(
-                        scene_number=str(scene_data.get('scene_number', '')),
-                        scene_title=scene_data.get('scene_title', ''),
-                        scene_text='',  # Будет заполнено позже
-                        start_pos=scene_data.get('start_pos', 0),
-                        end_pos=scene_data.get('end_pos', 0),
-                        confidence=0.9
-                    )
-                    all_scenes.append(scene)
-            else:
-                logger.warning("Не удалось извлечь сцены из ответа LLM, используем fallback")
-                # Fallback: разбиение по заголовкам
-                all_scenes.extend(self._fallback_scene_detection(chunk))
-        
-        # Извлекаем текст сцен из оригинального текста
-        for scene in all_scenes:
-            if scene.start_pos < len(screenplay_text) and scene.end_pos <= len(screenplay_text):
-                scene.scene_text = screenplay_text[scene.start_pos:scene.end_pos]
-            else:
-                # Если позиции некорректны, используем альтернативный метод
-                scene.scene_text = self._extract_scene_text_by_title(screenplay_text, scene.scene_title)
-        
-        logger.info(f"Обнаружено {len(all_scenes)} сцен")
+        logger.info(f"Обнаружено {len(all_scenes)} сцен через regex")
         return all_scenes
     
     def _fallback_scene_detection(self, text: str) -> List[SceneDetection]:
-        """Fallback метод детекции сцен через regex"""
+        """Основной метод детекции сцен через regex (надежнее чем LLM)"""
         scenes = []
-        pattern = re.compile(
-            r'(?P<number>\d+[-.]?\d*\.? )?\s*'
-            r'(?P<type>INT\.|EXT\.|ИНТ\.|ЭКСТ\.|НАТ\.)\s*'
-            r'(?P<location>[^.\n]+?)(?:\.\s*(?P<sublocation>[^.\n]+?))?\s*[.\-\s]*\s*'
-            r'(?P<time>ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР|РАССВЕТ|ЗАКАТ)?',
-            re.MULTILINE | re.IGNORECASE
-        )
         
-        matches = list(pattern.finditer(text))
-        for i, match in enumerate(matches):
-            start = match.start()
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        # Улучшенный паттерн для детекции сцен
+        # Поддерживает различные форматы: "1. ИНТ. КВАРТИРА - ДЕНЬ", "СЦЕНА 1", "INT. LOCATION", и т.д.
+        patterns = [
+            # Основной паттерн: номер + тип + локация + время
+            re.compile(
+                r'(?P<number>\d+[-.]?\d*\.? )?\s*'
+                r'(?P<type>INT\.|EXT\.|ИНТ\.|ЭКСТ\.|НАТ\.|INTERIOR\.|EXTERIOR\.)\s*'
+                r'(?P<location>[^.\n\-–—]+?)(?:\.\s*(?P<sublocation>[^.\n\-–—]+?))?\s*[.\-\s–—]*\s*'
+                r'(?P<time>ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР|РАССВЕТ|ЗАКАТ|DAY|NIGHT|MORNING|EVENING|DAWN|DUSK)?',
+                re.MULTILINE | re.IGNORECASE
+            ),
+            # Альтернативный паттерн: "СЦЕНА 1" или "SCENE 1"
+            re.compile(
+                r'(?:СЦЕНА|SCENE)\s*(?P<number>\d+[-.]?\d*)\s*[:\-]?\s*'
+                r'(?P<type>INT\.|EXT\.|ИНТ\.|ЭКСТ\.|НАТ\.)?\s*'
+                r'(?P<location>[^\n]+?)(?:\s*[-–—]\s*(?P<time>ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР))?',
+                re.MULTILINE | re.IGNORECASE
+            ),
+            # Простой паттерн: только тип + локация
+            re.compile(
+                r'^(?P<type>INT\.|EXT\.|ИНТ\.|ЭКСТ\.|НАТ\.)\s*'
+                r'(?P<location>[^.\n\-–—]+?)(?:\s*[-–—]\s*(?P<time>ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР))?',
+                re.MULTILINE | re.IGNORECASE
+            )
+        ]
+        
+        # Собираем все совпадения
+        all_matches = []
+        for pattern in patterns:
+            matches = list(pattern.finditer(text))
+            for match in matches:
+                all_matches.append((match.start(), match))
+        
+        # Сортируем по позиции в тексте
+        all_matches.sort(key=lambda x: x[0])
+        
+        # Удаляем дубликаты (если несколько паттернов нашли одно и то же)
+        unique_matches = []
+        seen_positions = set()
+        for pos, match in all_matches:
+            # Проверяем, что это не дубликат (в пределах 50 символов)
+            is_duplicate = False
+            for seen_pos in seen_positions:
+                if abs(pos - seen_pos) < 50:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique_matches.append((pos, match))
+                seen_positions.add(pos)
+        
+        # Создаем сцены
+        for i, (start, match) in enumerate(unique_matches):
+            # Определяем конец сцены (начало следующей или конец текста)
+            if i + 1 < len(unique_matches):
+                end = unique_matches[i + 1][0]
+            else:
+                end = len(text)
+            
+            # Извлекаем номер сцены
+            scene_number = match.group('number')
+            if not scene_number:
+                scene_number = str(i + 1)
+            else:
+                scene_number = scene_number.strip().rstrip('.')
+            
+            # Извлекаем тип сцены
+            scene_type = match.group('type') or ''
+            scene_type = scene_type.strip().rstrip('.')
+            
+            # Извлекаем локацию
+            location = match.group('location') or ''
+            location = location.strip()
+            
+            # Извлекаем подобъект
+            sublocation = match.group('sublocation') or ''
+            sublocation = sublocation.strip()
+            
+            # Извлекаем время
+            time = match.group('time') or ''
+            time = time.strip()
+            
+            # Формируем заголовок сцены
+            scene_title_parts = []
+            if scene_type:
+                scene_title_parts.append(scene_type.upper())
+            if location:
+                scene_title_parts.append(location)
+            if sublocation:
+                scene_title_parts.append(sublocation)
+            if time:
+                scene_title_parts.append(time.upper())
+            
+            scene_title = ' '.join(scene_title_parts) if scene_title_parts else match.group(0)
+            
+            # Извлекаем текст сцены (от начала заголовка до начала следующей сцены)
+            scene_text = text[start:end].strip()
+            
+            # Если текст сцены не содержит заголовок, добавляем его
+            if scene_title and scene_title not in scene_text[:100]:
+                scene_text = f"{scene_title}\n\n{scene_text}"
             
             scene = SceneDetection(
-                scene_number=str(match.group('number') or i + 1),
-                scene_title=match.group(0),
-                scene_text=text[start:end],
+                scene_number=scene_number,
+                scene_title=scene_title,
+                scene_text=scene_text,
                 start_pos=start,
                 end_pos=end,
-                confidence=0.7
+                confidence=0.9  # Высокая уверенность для regex-метода
             )
             scenes.append(scene)
+        
+        # Если не нашли сцены через паттерны, пробуем разбить по двойным переводам строки
+        if not scenes:
+            logger.warning("Не найдено сцен через паттерны, пробуем разбить по параграфам...")
+            paragraphs = re.split(r'\n{3,}', text)
+            for i, para in enumerate(paragraphs):
+                para = para.strip()
+                if len(para) >= 50:  # Минимальная длина сцены
+                    scene = SceneDetection(
+                        scene_number=str(i + 1),
+                        scene_title=f"Сцена {i + 1}",
+                        scene_text=para,
+                        start_pos=text.find(para),
+                        end_pos=text.find(para) + len(para),
+                        confidence=0.5
+                    )
+                    scenes.append(scene)
         
         return scenes
     
@@ -513,7 +688,26 @@ class LLMEngine:
             
             # Парсим результаты
             for scene, response in zip(batch, responses):
-                entities = self._extract_json(response) or {}
+                entities = self._extract_json(response)
+                
+                # Убеждаемся, что entities - это словарь
+                if not isinstance(entities, dict):
+                    if isinstance(entities, list):
+                        logger.warning(f"Сцена {scene.scene_number}: получен список вместо словаря. Используем пустой словарь.")
+                    entities = {}
+                
+                # Валидация и очистка результатов
+                try:
+                    try:
+                        from app.result_validator import ResultValidator
+                    except ImportError:
+                        from result_validator import ResultValidator
+                    validator = ResultValidator()
+                    entities = validator.validate_and_clean(entities, scene.scene_text)
+                except ImportError:
+                    logger.warning("ResultValidator не найден, пропускаем валидацию")
+                except Exception as e:
+                    logger.warning(f"Ошибка валидации результатов: {e}")
                 
                 extraction = EntityExtraction(
                     scene_number=scene.scene_number,
@@ -550,12 +744,29 @@ class LLMEngine:
         # Объединяем результаты
         results = []
         for scene, extraction in zip(scenes, extractions):
-            result = {
-                'scene_number': scene.scene_number,
-                'scene_title': scene.scene_title,
-                'scene_text': scene.scene_text,
-                **extraction.entities
-            }
+            # Проверяем, что entities - это словарь, а не список
+            if isinstance(extraction.entities, dict):
+                result = {
+                    'scene_number': scene.scene_number,
+                    'scene_title': scene.scene_title,
+                    'scene_text': scene.scene_text,
+                    **extraction.entities
+                }
+            elif isinstance(extraction.entities, list):
+                # Если это список, создаем словарь с базовыми полями
+                logger.warning(f"Сцена {scene.scene_number}: entities это список, а не словарь. Используем пустой словарь.")
+                result = {
+                    'scene_number': scene.scene_number,
+                    'scene_title': scene.scene_title,
+                    'scene_text': scene.scene_text
+                }
+            else:
+                # Fallback
+                result = {
+                    'scene_number': scene.scene_number,
+                    'scene_title': scene.scene_title,
+                    'scene_text': scene.scene_text
+                }
             results.append(result)
         
         return results
