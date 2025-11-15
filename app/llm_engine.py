@@ -390,19 +390,22 @@ class LLMEngine:
             gen_params = self.config.get('llm', {}).get('generation', {})
             
             # Токенизация батча
+            logger.info(f"Токенизация {len(prompts)} промптов...")
             inputs = self.tokenizer(
                 prompts,
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=4096
+                max_length=2048  # Уменьшено для экономии памяти
             ).to(self.device)
+            
+            logger.info(f"Размер батча: {inputs['input_ids'].shape}, начинаю генерацию...")
             
             # Генерация
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=gen_params.get('max_new_tokens', 2048),
+                    max_new_tokens=min(gen_params.get('max_new_tokens', 2048), 1024),  # Ограничено до 1024
                     temperature=gen_params.get('temperature', 0.05),
                     top_p=gen_params.get('top_p', 0.9),
                     top_k=gen_params.get('top_k', 40),
@@ -410,6 +413,8 @@ class LLMEngine:
                     pad_token_id=self.tokenizer.pad_token_id,
                     eos_token_id=self.tokenizer.eos_token_id
                 )
+            
+            logger.info(f"Генерация завершена, декодирую ответы...")
             
             # Декодирование
             responses = []
@@ -685,15 +690,22 @@ class LLMEngine:
             # Генерируем промпты для батча
             prompts = []
             for scene in batch:
+                # Ограничиваем длину текста сцены для экономии памяти
+                scene_text_limited = scene.scene_text[:2000] if len(scene.scene_text) > 2000 else scene.scene_text
                 prompt = self._generate_entity_extraction_prompt(
-                    scene.scene_text,
+                    scene_text_limited,
                     scene.scene_number,
                     entities_to_extract
                 )
                 prompts.append(prompt)
             
             # Вызываем модель батчем
+            logger.info(f"Вызываю модель для батча из {len(prompts)} сцен...")
+            import time
+            start_time = time.time()
             responses = self._call_model(prompts)
+            elapsed = time.time() - start_time
+            logger.info(f"Модель обработала батч за {elapsed:.1f} секунд")
             
             # Парсим результаты
             for scene, response in zip(batch, responses):

@@ -163,7 +163,7 @@ llm:
   
   # Параметры генерации
   generation:
-    max_new_tokens: 2048  # Увеличено для более детальных ответов
+    max_new_tokens: 1024  # Уменьшено для Mixtral-8x7B из-за ограничений памяти
     temperature: 0.05  # Снижено для большей точности
     top_p: 0.9
     top_k: 40
@@ -172,7 +172,7 @@ llm:
   # Батчевая обработка
   batch:
     scene_detection_batch_size: 10
-    entity_extraction_batch_size: 6  # Оптимизировано для Mixtral-8x7B
+    entity_extraction_batch_size: 1  # Уменьшено из-за ограничений памяти Mixtral-8x7B
     
   # Использование flash attention (если доступно)
   use_flash_attention: true
