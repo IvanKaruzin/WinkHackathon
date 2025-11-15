@@ -2,21 +2,20 @@
 """
 screenplay_parser.py
 
-Сервис парсинга типизированых сценариев в excel-таблицу.
-Использует локальную LLM через llama-cpp-python для извлечения метаданных.
+Сервис парсинга типизированных сценариев в excel-таблицу.
+Использует GPU-оптимизированную LLM-архитектуру для извлечения метаданных.
 
 Автор: Production Pipeline Parser
-Версия: 1.0.0
+Версия: 2.0.0 (LLM-based)
 """
 
 import argparse
 import json
 import os
-import re
 import sys
 import gc
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, asdict, field
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import warnings
@@ -26,15 +25,6 @@ import pandas as pd
 from docx import Document
 from tqdm import tqdm
 import numpy as np
-
-# Импорт llama-cpp
-try:
-    from llama_cpp import Llama
-except ImportError:
-    print("Ошибка: llama-cpp-python не установлен")
-    print("Установите: pip install llama-cpp-python")
-    # Не выходим — позволим работать в режиме без LLM
-    Llama = None
 
 # Настройка логирования
 logging.basicConfig(
@@ -47,41 +37,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# -----------------------------
-#  Конфигурация
-# -----------------------------
-
-class Config:
-    """Конфигурация парсера"""
-    # Пути
-    MODEL_PATH = "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"  # Путь к модели
-    
-    # Параметры модели для M3 Pro
-    MODEL_PARAMS = {
-        'n_ctx': 1024,
-        'n_batch': 128,
-        'n_threads': 4,
-        'n_gpu_layers': 1,
-        'use_mmap': True,
-        'use_mlock': False,
-        'seed': 42,
-        'verbose': True
-    }
-    
-    # Параметры генерации
-    GENERATION_PARAMS = {
-        'max_tokens': 512,
-        'temperature': 0.3,
-        'top_p': 0.95,
-        'top_k': 40,
-        'repeat_penalty': 1.1,
-        'stop': ["</s>", "\n\n\n", "---"]
-    }
-    
-    # Парсинг
-    MIN_SCENE_LENGTH = 50
-    MAX_SCENE_LENGTH = 5000
-    BATCH_SIZE = 5  # Обрабатывать по 5 сцен за раз
+# Импорт нового LLM-движка
+try:
+    from app.llm_engine import LLMEngine
+except ImportError:
+    try:
+        from llm_engine import LLMEngine
+    except ImportError:
+        logger.error("Не удалось импортировать LLMEngine. Убедитесь, что llm_engine.py находится в app/")
+        LLMEngine = None
 
 
 # -----------------------------
@@ -93,7 +57,7 @@ class SceneMetadata:
     """Структура для хранения метаданных сцены"""
     scene_number: str = ""
     episode: str = ""
-    scene_type: str = ""  # INT/EXT/ИНТ/ЭКСТ/НАТ
+    scene_type: str = ""
     location: str = ""
     sublocation: str = ""
     time_of_day: str = ""
@@ -115,339 +79,185 @@ class SceneMetadata:
 
 
 # -----------------------------
-#  LLM Manager
-# -----------------------------
-
-class LocalLLM:
-    """Менеджер для работы с локальной LLM"""
-    
-    def __init__(self, model_path: str = None):
-        self.model_path = model_path or Config.MODEL_PATH
-        self.model = None
-        self._load_model()
-    
-    def _load_model(self):
-        """Загружает модель с оптимизацией под Mac M3"""
-        try:
-            logger.info(f"Загрузка модели из {self.model_path}")
-            logger.info("Это может занять 1-2 минуты...")
-            
-            # Проверяем существование файла модели
-            if not Path(self.model_path).exists():
-                raise FileNotFoundError(f"Модель не найдена: {self.model_path}")
-            
-            if Llama is None:
-                raise RuntimeError("llama-cpp-python недоступен")
-            
-            # Инициализация
-            self.model = Llama(
-                model_path=self.model_path,
-                **Config.MODEL_PARAMS
-            )
-            
-            logger.info("Модель успешно загружена")
-            
-        except Exception as e:
-            logger.error(f"Ошибка загрузки модели: {e}")
-            logger.info("Работаем без LLM, используя только правила")
-            self.model = None
-    
-    def generate(self, prompt: str, system_prompt: str = None) -> str:
-        """Генерирует ответ на промпт"""
-        if self.model is None:
-            return "{}"
-        
-        try:
-            # Формируем полный промпт
-            if system_prompt:
-                full_prompt = f"<s>[INST] {system_prompt}\n\n{prompt} [/INST]"
-            else:
-                full_prompt = f"<s>[INST] {prompt} [/INST]"
-            
-            # Генерация
-            response = self.model(
-                full_prompt,
-                **Config.GENERATION_PARAMS
-            )
-            
-            return response['choices'][0]['text'].strip()
-            
-        except Exception as e:
-            logger.warning(f"Ошибка генерации: {e}")
-            return "{}"
-    
-    def extract_json(self, text: str) -> Dict[str, Any]:
-        """Извлекает JSON из ответа модели"""
-        try:
-            # Ищем JSON в тексте
-            json_match = re.search(r'\{[^}]*\}', text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                # Исправляем common issues
-                json_str = json_str.replace("'", '"')
-                json_str = re.sub(r',\s*}', '}', json_str)
-                json_str = re.sub(r',\s*]', ']', json_str)
-                return json.loads(json_str)
-        except:
-            pass
-        return {}
-    
-    def __del__(self):
-        """Освобождение памяти при удалении объекта"""
-        if self.model:
-            try:
-                del self.model
-            except Exception:
-                pass
-            gc.collect()
-
-
-# -----------------------------
-#  Парсинг сценария
+#  Парсинг сценария (LLM-based)
 # -----------------------------
 
 class ScenarioParser:
-    """Класс для парсинга сценария"""
+    """Класс для парсинга сценария с использованием LLM"""
     
-    SCENE_PATTERNS = {
-        'heading': re.compile(
-            r'^(?P<number>\d+[-.]?\d*\.? )?\s*'
-            r'(?P<type>INT\.|EXT\.|ИНТ\.|ЭКСТ\.|НАТ\.)\s*'
-            r'(?P<location>[^.\n]+?)(?:\.\s*(?P<sublocation>[^.\n]+?))?\s*[.\-\s]*\s*'
-            r'(?P<time>ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР|РАССВЕТ|ЗАКАТ|День|Ночь|Утро|Вечер)?',
-            re.MULTILINE | re.IGNORECASE
-        ),
-        'character': re.compile(
-            r'^([А-ЯЁA-Z][А-ЯЁA-Z\s\-,]{1,30})(?:\s*\([\w\s,]+\))?$',
-            re.MULTILINE
-        ),
-        'parenthetical': re.compile(
-            r'\(([^)]+)\)',
-            re.MULTILINE
-        )
-    }
-    
-    KEYWORDS = {
-        'props': [
-            'телефон', 'ноутбук', 'компьютер', 'письмо', 'книга', 'сумка',
-            'ключи', 'документы', 'оружие', 'нож', 'пистолет', 'деньги',
-            'фотография', 'камера', 'микрофон', 'наушники', 'очки', 'часы',
-            'кольцо', 'цветы', 'бутылка', 'стакан', 'еда', 'напиток'
-        ],
-        'vehicles': [
-            'машина', 'автомобиль', 'автобус', 'такси', 'мотоцикл',
-            'велосипед', 'самолет', 'вертолет', 'поезд', 'корабль', 'лодка'
-        ],
-        'effects': [
-            'взрыв', 'выстрел', 'дым', 'огонь', 'пожар', 'искры', 'кровь',
-            'слезы', 'дождь', 'снег', 'туман', 'ветер', 'молния', 'гром'
-        ],
-        'stunts': [
-            'драка', 'удар', 'падение', 'прыжок', 'погоня', 'авария',
-            'бег', 'борьба', 'трюк', 'каскадер'
-        ]
-    }
-    
-    def __init__(self, use_llm: bool = True):
-        self.use_llm = use_llm
-        self.llm = None
-        if use_llm:
-            self.llm = LocalLLM()
-        self.scenes = []
+    def __init__(self, config_path: str = "config.yaml", preset: str = "full", custom_entities: Optional[List[str]] = None):
+        """
+        Инициализация парсера
         
-    def parse_screenplay(self, text: str) -> List[SceneMetadata]:
-        """Основной метод парсинга сценария"""
-        logger.info("Начинаю парсинг сценария...")
+        Args:
+            config_path: Путь к конфигурационному файлу
+            preset: Пресет для извлечения сущностей ("basic", "extended", "full")
+            custom_entities: Кастомный список сущностей для извлечения (если None, используется preset)
+        """
+        self.config_path = config_path
+        self.preset = preset
+        self.custom_entities = custom_entities
+        self.llm_engine = None
         
-        scenes_raw = self._split_into_scenes(text)
-        logger.info(f"Найдено {len(scenes_raw)} сцен")
-        
-        batch_size = Config.BATCH_SIZE
-        for i in tqdm(range(0, len(scenes_raw), batch_size), desc="Обработка сцен"):
-            batch = scenes_raw[i:i + batch_size]
-            
-            for j, scene_text in enumerate(batch):
-                scene_num = i + j + 1
-                metadata = self._extract_scene_metadata(scene_text, scene_num)
-                
-                if self.use_llm and self.llm and self.llm.model:
-                    metadata = self._enhance_with_llm(metadata)
-                
-                self.scenes.append(metadata)
-            
-            gc.collect()
-        
-        return self.scenes
-    
-    def _split_into_scenes(self, text: str) -> List[str]:
-        text = text.replace('\r\n', '\n').replace('\r', '\n')
-        
-        scenes = []
-        scene_headers = list(self.SCENE_PATTERNS['heading'].finditer(text))
-        
-        if not scene_headers:
-            logger.warning("Явные заголовки сцен не найдены, используем альтернативное разбиение")
-            parts = re.split(r'\n{2,}', text)
-            return [p.strip() for p in parts 
-                   if p and Config.MIN_SCENE_LENGTH <= len(p.strip()) <= Config.MAX_SCENE_LENGTH]
-        
-        for i, match in enumerate(scene_headers):
-            start = match.start()
-            end = scene_headers[i + 1].start() if i + 1 < len(scene_headers) else len(text)
-            scene_text = text[start:end].strip()
-            
-            if Config.MIN_SCENE_LENGTH <= len(scene_text) <= Config.MAX_SCENE_LENGTH:
-                scenes.append(scene_text)
-        
-        return scenes
-    
-    def _extract_scene_metadata(self, scene_text: str, scene_num: int) -> SceneMetadata:
-        metadata = SceneMetadata(
-            scene_number=str(scene_num),
-            raw_text=scene_text[:500]
-        )
-        
-        header_match = self.SCENE_PATTERNS['heading'].search(scene_text)
-        if header_match:
-            groups = header_match.groupdict()
-            metadata.scene_number = groups.get('number') or str(scene_num)
-            metadata.scene_type = (groups.get('type') or 'INT').strip('.')
-            metadata.location = (groups.get('location') or '').strip()
-            metadata.sublocation = (groups.get('sublocation') or '').strip()
-            metadata.time_of_day = groups.get('time') or 'ДЕНЬ'
-        
-        metadata.characters = self._extract_characters(scene_text)
-        metadata.synopsis = self._extract_synopsis(scene_text)
-        text_lower = scene_text.lower()
-        
-        metadata.props = [prop for prop in self.KEYWORDS['props'] 
-                         if prop in text_lower][:10]
-        
-        metadata.vehicles = [v for v in self.KEYWORDS['vehicles'] 
-                           if v in text_lower][:5]
-        
-        metadata.special_fx = [fx for fx in self.KEYWORDS['effects'] 
-                              if fx in text_lower]
-        
-        metadata.stunts = any(stunt in text_lower for stunt in self.KEYWORDS['stunts'])
-        
-        metadata.pyrotechnics = any(word in text_lower for word in ['взрыв', 'огонь', 'пожар', 'выстрел'])
-        
-        extras_match = re.search(r'(?:массовка|толпа|зрители|прохожие|студенты|гости)[\s:\-]*(\d+)?', 
-                                 text_lower)
-        if extras_match:
-            metadata.extras = extras_match.group(0)
-            if extras_match.group(1):
-                try:
-                    metadata.extras_count = int(extras_match.group(1))
-                except Exception:
-                    metadata.extras_count = 0
-        
-        return metadata
-    
-    def _extract_characters(self, text: str) -> List[str]:
-        characters = set()
-        lines = text.split('\n')
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            
-            if self.SCENE_PATTERNS['character'].match(line):
-                character = re.sub(r'\([^)]*\)', '', line).strip()
-                if (character and 
-                    not any(word in character.upper() for word in 
-                           ['ИНТ', 'ЭКСТ', 'НАТ', 'ДЕНЬ', 'НОЧЬ', 'УТРО', 'ВЕЧЕР']) and
-                    len(character) > 2):
-                    characters.add(character)
-        
-        name_contexts = re.findall(
-            r'(?:говорит|спрашивает|отвечает|кричит|шепчет|зовет)\s+([А-ЯЁ][а-яё]+)',
-            text
-        )
-        characters.update(name_contexts)
-        
-        return sorted(list(characters))[:15]
-    
-    def _extract_synopsis(self, text: str) -> str:
-        lines = text.split('\n')
-        synopsis_lines = []
-        
-        start_idx = 0
-        for i, line in enumerate(lines):
-            if self.SCENE_PATTERNS['heading'].match(line):
-                start_idx = i + 1
-                break
-        
-        for line in lines[start_idx:]:
-            line = line.strip()
-            if self.SCENE_PATTERNS['character'].match(line):
-                break
-            if line and not line.isupper():
-                synopsis_lines.append(line)
-                if len(' '.join(synopsis_lines)) > 300:
-                    break
-        
-        synopsis = ' '.join(synopsis_lines)
-        synopsis = ' '.join(synopsis.split())
-        
-        return synopsis[:400]
-    
-    def _enhance_with_llm(self, metadata: SceneMetadata) -> SceneMetadata:
-        if not self.llm or not self.llm.model:
-            return metadata
+        if LLMEngine is None:
+            logger.error("LLMEngine недоступен. Установите зависимости: pip install transformers torch")
+            raise RuntimeError("LLMEngine недоступен")
         
         try:
-            system_prompt = """Ты - ассистент режиссера, анализирующий сценарии для кинопроизводства.
-Твоя задача - извлечь точную информацию о производственных требованиях сцены.
-Отвечай ТОЛЬКО в формате JSON, без дополнительного текста."""
-
-            prompt = f"""Проанализируй сцену и извлеки недостающую информацию:
-
-СЦЕНА: {metadata.location} - {metadata.time_of_day}
-ТЕКСТ: {metadata.raw_text}
-
-Уже извлечено:
-- Персонажи: {', '.join(metadata.characters[:5]) if metadata.characters else 'не найдены'}
-- Реквизит: {', '.join(metadata.props[:5]) if metadata.props else 'не найден'}
-
-Дополни в формате JSON:
-{{
-  "extras_description": "описание массовки и количество",
-  "additional_props": ["дополнительный", "реквизит"],
-  "costume_notes": ["особенности", "костюмов"],
-  "makeup_notes": ["требования", "к гриму"],
-  "special_requirements": "особые требования к съемке"
-}}"""
-
-            response = self.llm.generate(prompt, system_prompt)
-            data = self.llm.extract_json(response)
-            
-            if data:
-                if 'extras_description' in data:
-                    metadata.extras = str(data['extras_description'])
-                
-                if 'additional_props' in data and isinstance(data['additional_props'], list):
-                    metadata.props.extend(data['additional_props'])
-                    metadata.props = list(set(metadata.props))[:15]
-                    
-                if 'costume_notes' in data and isinstance(data['costume_notes'], list):
-                    metadata.costumes = data['costume_notes'][:5]
-                    
-                if 'makeup_notes' in data and isinstance(data['makeup_notes'], list):
-                    metadata.makeup = data['makeup_notes'][:5]
-                    
-                if 'special_requirements' in data:
-                    metadata.notes = str(data['special_requirements'])
-                
-                metadata.confidence_score = 0.8
-            else:
-                metadata.confidence_score = 0.5
-                
+            logger.info("Инициализация LLM-движка...")
+            self.llm_engine = LLMEngine(config_path=config_path)
+            logger.info("LLM-движок успешно инициализирован")
         except Exception as e:
-            logger.warning(f"Ошибка при улучшении с LLM: {e}")
-            metadata.confidence_score = 0.5
+            logger.error(f"Ошибка инициализации LLM-движка: {e}")
+            raise
+        
+        self.scenes = []
+    
+    def parse_screenplay(self, text: str) -> List[SceneMetadata]:
+        """
+        Основной метод парсинга сценария
+        
+        Args:
+            text: Текст сценария
+            
+        Returns:
+            Список SceneMetadata с извлеченными данными
+        """
+        logger.info("Начинаю парсинг сценария через LLM...")
+        
+        if not self.llm_engine:
+            raise RuntimeError("LLM-движок не инициализирован")
+        
+        try:
+            # Используем полный пайплайн LLM-движка
+            results = self.llm_engine.process_screenplay(
+                screenplay_text=text,
+                preset=self.preset,
+                custom_entities=self.custom_entities
+            )
+            
+            logger.info(f"LLM обработал {len(results)} сцен")
+            
+            # Преобразуем результаты в SceneMetadata
+            self.scenes = []
+            for result in results:
+                metadata = self._convert_to_metadata(result)
+                self.scenes.append(metadata)
+            
+            logger.info(f"Успешно обработано {len(self.scenes)} сцен")
+            return self.scenes
+            
+        except Exception as e:
+            logger.error(f"Ошибка при парсинге сценария: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    def _convert_to_metadata(self, result: Dict[str, Any]) -> SceneMetadata:
+        """Преобразует результат LLM в SceneMetadata"""
+        metadata = SceneMetadata()
+        
+        # Базовые поля
+        metadata.scene_number = str(result.get('scene_number', ''))
+        metadata.raw_text = result.get('scene_text', '')
+        
+        # Парсим заголовок сцены для извлечения базовой информации
+        scene_title = result.get('scene_title', '')
+        self._parse_scene_title(scene_title, metadata)
+        
+        # Извлекаем сущности из результата LLM
+        metadata.location = self._safe_get(result, 'location', '')
+        metadata.sublocation = self._safe_get(result, 'sublocation', '')
+        metadata.time_of_day = self._safe_get(result, 'time_of_day', '')
+        metadata.scene_type = self._safe_get(result, 'scene_type', '')
+        metadata.synopsis = self._safe_get(result, 'synopsis', '')
+        
+        # Списки
+        metadata.characters = self._safe_get_list(result, 'characters')
+        metadata.props = self._safe_get_list(result, 'props')
+        metadata.vehicles = self._safe_get_list(result, 'vehicles')
+        metadata.special_fx = self._safe_get_list(result, 'vfx')
+        metadata.costumes = self._safe_get_list(result, 'costumes')
+        metadata.makeup = self._safe_get_list(result, 'makeup')
+        metadata.special_equipment = self._safe_get_list(result, 'special_equipment')
+        
+        # Массовка
+        crowd = self._safe_get(result, 'crowd', '')
+        if crowd:
+            metadata.extras = crowd
+            # Пытаемся извлечь число из описания массовки
+            import re
+            numbers = re.findall(r'\d+', crowd)
+            if numbers:
+                try:
+                    metadata.extras_count = int(numbers[0])
+                except:
+                    metadata.extras_count = 0
+        metadata.extras_count = self._safe_get(result, 'crowd_count', metadata.extras_count)
+        
+        # Булевы значения
+        metadata.stunts = self._safe_get(result, 'stunts', False)
+        metadata.pyrotechnics = self._safe_get(result, 'pyrotechnics', False)
+        
+        # Примечания
+        metadata.notes = self._safe_get(result, 'notes', '')
+        
+        # Звуковые эффекты (если есть)
+        sfx = self._safe_get_list(result, 'sfx')
+        if sfx:
+            if not metadata.notes:
+                metadata.notes = f"Звуковые эффекты: {', '.join(sfx)}"
+            else:
+                metadata.notes += f"\nЗвуковые эффекты: {', '.join(sfx)}"
+        
+        # Уверенность (можно добавить из результата LLM, если есть)
+        metadata.confidence_score = result.get('confidence', 0.8)
         
         return metadata
+    
+    def _parse_scene_title(self, title: str, metadata: SceneMetadata):
+        """Парсит заголовок сцены для извлечения базовой информации"""
+        if not title:
+            return
+        
+        # Ищем тип сцены
+        import re
+        scene_type_match = re.search(r'(ИНТ|ЭКСТ|НАТ|INT|EXT)', title, re.IGNORECASE)
+        if scene_type_match:
+            metadata.scene_type = scene_type_match.group(0).upper()
+            if metadata.scene_type in ['INT', 'EXT']:
+                metadata.scene_type = 'ИНТ' if metadata.scene_type == 'INT' else 'ЭКСТ'
+        
+        # Ищем время суток
+        time_match = re.search(r'(ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР|РАССВЕТ|ЗАКАТ)', title, re.IGNORECASE)
+        if time_match:
+            metadata.time_of_day = time_match.group(0).upper()
+        
+        # Если локация не была извлечена LLM, пытаемся извлечь из заголовка
+        if not metadata.location:
+            # Убираем тип сцены и время суток, оставляем локацию
+            location_text = re.sub(r'(ИНТ|ЭКСТ|НАТ|INT|EXT)\.?\s*', '', title, flags=re.IGNORECASE)
+            location_text = re.sub(r'(ДЕНЬ|НОЧЬ|УТРО|ВЕЧЕР|РАССВЕТ|ЗАКАТ)', '', location_text, flags=re.IGNORECASE)
+            location_text = location_text.strip(' -.,')
+            if location_text:
+                metadata.location = location_text
+    
+    def _safe_get(self, d: Dict, key: str, default: Any = None) -> Any:
+        """Безопасное получение значения из словаря"""
+        value = d.get(key, default)
+        if value is None:
+            return default
+        return value
+    
+    def _safe_get_list(self, d: Dict, key: str) -> List[str]:
+        """Безопасное получение списка из словаря"""
+        value = d.get(key, [])
+        if isinstance(value, list):
+            return [str(item) for item in value if item]
+        elif isinstance(value, str):
+            # Если это строка, пытаемся разбить по запятым
+            return [item.strip() for item in value.split(',') if item.strip()]
+        return []
 
 
 # -----------------------------
@@ -474,11 +284,30 @@ def read_docx(path: str) -> str:
         raise
 
 
+def read_pdf(path: str) -> str:
+    """Читает .pdf файл"""
+    try:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        return "\n\n".join(text_parts)
+    except ImportError:
+        raise RuntimeError("pdfplumber не установлен. Установите: pip install pdfplumber")
+    except Exception as e:
+        logger.error(f"Ошибка чтения PDF {path}: {e}")
+        raise
+
+
 # -----------------------------
 #  Экспорт в Excel
 # -----------------------------
 
 def create_production_table(scenes: List[SceneMetadata]) -> pd.DataFrame:
+    """Создает таблицу для КПП из списка сцен"""
     rows = []
     
     for scene in scenes:
@@ -508,10 +337,11 @@ def create_production_table(scenes: List[SceneMetadata]) -> pd.DataFrame:
     
     df = pd.DataFrame(rows)
     
+    # Сортировка по номеру сцены
     try:
         df['scene_num'] = df['Сцена'].astype(str).str.extract(r'(\d+)').astype(float)
         df = df.sort_values('scene_num').drop('scene_num', axis=1)
-    except Exception:
+    except:
         pass
     
     return df
@@ -597,6 +427,7 @@ def export_to_excel(df: pd.DataFrame, output_path: str):
 # -----------------------------
 
 def print_statistics(scenes: List[SceneMetadata], df: pd.DataFrame):
+    """Выводит статистику по обработанным сценам"""
     print("\n" + "="*70)
     print(" " * 20 + "СТАТИСТИКА ПАРСИНГА")
     print("="*70)
@@ -646,43 +477,43 @@ def print_statistics(scenes: List[SceneMetadata], df: pd.DataFrame):
     print("\n" + "="*70)
 
 
+# -----------------------------
+#  CLI
+# -----------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description="🎬 Парсер сценариев для создания КПП (календарно-постановочного плана)",
+        description="🎬 Парсер сценариев для создания КПП (LLM-based)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры использования:
   python screenplay_parser.py -i scenario.docx -o production.xlsx
-  python screenplay_parser.py -i scenario.docx --no-llm  # без LLM
-  python screenplay_parser.py -i scenario.docx --model models/my_model.gguf
+  python screenplay_parser.py -i scenario.docx -o production.xlsx --preset basic
+  python screenplay_parser.py -i scenario.docx -o production.xlsx --preset extended
+  python screenplay_parser.py -i scenario.docx -o production.xlsx --config custom_config.yaml
         """
     )
     
     parser.add_argument(
         "--input", "-i",
         required=True,
-        help="Путь к файлу сценария (.docx)"
+        help="Путь к файлу сценария (.docx или .pdf)"
     )
     parser.add_argument(
         "--output", "-o",
         default="production_table.xlsx",
-        help="Путь для сохранения Excel таблицы (по умолчанию: production_table.xlsx)"
+        help="Путь для сохранения Excel таблицы"
     )
     parser.add_argument(
-        "--model",
-        default=Config.MODEL_PATH,
-        help="Путь к файлу модели GGUF"
+        "--config", "-c",
+        default="config.yaml",
+        help="Путь к конфигурационному файлу (по умолчанию: config.yaml)"
     )
     parser.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="Не использовать LLM (только правила)"
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=Config.BATCH_SIZE,
-        help="Размер батча для обработки сцен"
+        "--preset", "-p",
+        choices=["basic", "extended", "full"],
+        default="full",
+        help="Пресет для извлечения сущностей (по умолчанию: full)"
     )
     parser.add_argument(
         "--debug",
@@ -699,26 +530,26 @@ def main():
         logger.error(f"❌ Файл не найден: {args.input}")
         sys.exit(1)
     
-    if not args.input.endswith('.docx'):
-        logger.error("❌ Поддерживается только формат .docx")
+    file_ext = os.path.splitext(args.input)[1].lower()
+    if file_ext not in ['.docx', '.pdf']:
+        logger.error("❌ Поддерживаются только форматы .docx и .pdf")
         sys.exit(1)
-    
-    Config.MODEL_PATH = args.model
-    Config.BATCH_SIZE = args.batch_size
     
     try:
         logger.info(f"📖 Чтение файла {args.input}...")
-        text = read_docx(args.input)
+        if file_ext == '.pdf':
+            text = read_pdf(args.input)
+        else:
+            text = read_docx(args.input)
         logger.info(f"✓ Прочитано {len(text)} символов")
         
-        use_llm = not args.no_llm
-        if use_llm:
-            logger.info("🤖 Инициализация LLM...")
-        else:
-            logger.info("📝 Работа в режиме без LLM (только правила)")
+        logger.info(f"🤖 Инициализация LLM-парсера (пресет: {args.preset})...")
+        parser_obj = ScenarioParser(
+            config_path=args.config,
+            preset=args.preset
+        )
         
-        parser_obj = ScenarioParser(use_llm=use_llm)
-        
+        logger.info("🔄 Начинаю обработку сценария через LLM...")
         scenes = parser_obj.parse_screenplay(text)
         logger.info(f"✓ Обработано сцен: {len(scenes)}")
         

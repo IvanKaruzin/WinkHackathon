@@ -15,6 +15,9 @@ import os
 import time
 import io
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = Flask(__name__, static_folder=str(ROOT), static_url_path='')
@@ -49,7 +52,7 @@ def index():
 @APP.route('/api/upload', methods=['POST'])
 def api_upload():
     """Accept uploaded file and return parsed scenes JSON."""
-    from screenplay_parser import read_docx, ScenarioParser, create_production_table
+    from app.screenplay_parser import read_docx, read_pdf, ScenarioParser, create_production_table
 
     if 'file' not in request.files:
         return jsonify({'error': 'file required'}), 400
@@ -61,9 +64,14 @@ def api_upload():
     saved_path = save_dir / filename
     f.save(str(saved_path))
 
-    # Use template selection and options
-    template = request.form.get('template', 'basic')
-    use_llm = request.form.get('use_llm', 'false').lower() in ('1', 'true', 'yes')
+    # Use template/preset selection (basic, extended, full)
+    preset = request.form.get('template', 'full')
+    if preset not in ['basic', 'extended', 'full']:
+        preset = 'full'
+    
+    config_path = request.form.get('config', 'config.yaml')
+    # Полный путь к конфигу
+    config_full_path = str(ROOT / config_path) if not os.path.isabs(config_path) else config_path
 
     # Determine file type and extract text accordingly
     suffix = saved_path.suffix.lower()
@@ -72,14 +80,7 @@ def api_upload():
         if suffix == '.pdf':
             # Use pdfplumber to extract text
             try:
-                import pdfplumber
-            except Exception:
-                return jsonify({'error': 'pdfplumber is not installed on the server; please install it'}), 500
-
-            try:
-                with pdfplumber.open(str(saved_path)) as pdf:
-                    pages = [p.extract_text() or '' for p in pdf.pages]
-                    text = '\n\n'.join(pages).strip()
+                text = read_pdf(str(saved_path))
             except Exception as e:
                 return jsonify({'error': f'failed to read PDF: {e}'}), 500
         else:
@@ -91,8 +92,15 @@ def api_upload():
     except Exception as e:
         return jsonify({'error': f'unexpected error reading file: {e}'}), 500
 
-    parser = ScenarioParser(use_llm=use_llm)
-    scenes = parser.parse_screenplay(text)
+    # Initialize parser with preset
+    try:
+        parser = ScenarioParser(config_path=config_full_path, preset=preset)
+        scenes = parser.parse_screenplay(text)
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Ошибка парсинга: {e}\n{error_trace}")
+        return jsonify({'error': f'failed to parse screenplay: {e}'}), 500
 
     rows = []
     for s in scenes:
@@ -128,7 +136,7 @@ def api_upload():
 def api_download():
     """Return last parsed data in requested format."""
     fmt = request.args.get('format', 'json').lower()
-    from screenplay_parser import create_production_table
+    from app.screenplay_parser import create_production_table
 
     if not _last_parsed['df_rows']:
         return jsonify({'error': 'no parsed data available; upload a file first'}), 400

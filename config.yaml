@@ -1,0 +1,180 @@
+# Конфигурация для извлечения сущностей из сценариев
+# Определяет типы сущностей и пресеты для анализа
+
+# Типы извлекаемых сущностей
+entity_types:
+  location:
+    description: "Основная локация сцены (например: квартира, улица, офис)"
+    type: "string"
+    required: true
+    
+  sublocation:
+    description: "Подобъект или уточнение локации (например: кухня, спальня)"
+    type: "string"
+    required: false
+    
+  time_of_day:
+    description: "Время суток (ДЕНЬ, НОЧЬ, УТРО, ВЕЧЕР, РАССВЕТ, ЗАКАТ)"
+    type: "string"
+    required: true
+    
+  scene_type:
+    description: "Тип сцены (ИНТ, ЭКСТ, НАТ)"
+    type: "string"
+    required: true
+    
+  characters:
+    description: "Список персонажей, участвующих в сцене"
+    type: "list"
+    required: true
+    
+  props:
+    description: "Реквизит, необходимый для сцены"
+    type: "list"
+    required: false
+    
+  vehicles:
+    description: "Игровой транспорт в сцене"
+    type: "list"
+    required: false
+    
+  crowd:
+    description: "Описание массовки (количество и описание)"
+    type: "string"
+    required: false
+    
+  crowd_count:
+    description: "Количество людей в массовке (число)"
+    type: "integer"
+    required: false
+    
+  vfx:
+    description: "Визуальные эффекты (спецэффекты)"
+    type: "list"
+    required: false
+    
+  sfx:
+    description: "Звуковые эффекты"
+    type: "list"
+    required: false
+    
+  costumes:
+    description: "Особенности костюмов персонажей"
+    type: "list"
+    required: false
+    
+  makeup:
+    description: "Требования к гриму"
+    type: "list"
+    required: false
+    
+  stunts:
+    description: "Наличие трюков/каскадеров (true/false)"
+    type: "boolean"
+    required: false
+    
+  pyrotechnics:
+    description: "Наличие пиротехники (true/false)"
+    type: "boolean"
+    required: false
+    
+  special_equipment:
+    description: "Специальное оборудование для съемки"
+    type: "list"
+    required: false
+    
+  synopsis:
+    description: "Краткое описание сцены"
+    type: "string"
+    required: false
+    
+  notes:
+    description: "Дополнительные примечания к сцене"
+    type: "string"
+    required: false
+
+# Пресеты - предопределенные наборы сущностей
+presets:
+  basic:
+    name: "Базовый"
+    description: "Минимальный набор полей для КПП"
+    entities:
+      - location
+      - sublocation
+      - time_of_day
+      - scene_type
+      - characters
+      - synopsis
+      
+  extended:
+    name: "Расширенный"
+    description: "Расширенный набор с реквизитом и эффектами"
+    entities:
+      - location
+      - sublocation
+      - time_of_day
+      - scene_type
+      - characters
+      - props
+      - vehicles
+      - crowd
+      - crowd_count
+      - vfx
+      - synopsis
+      
+  full:
+    name: "Полный"
+    description: "Полный набор всех доступных сущностей"
+    entities:
+      - location
+      - sublocation
+      - time_of_day
+      - scene_type
+      - characters
+      - props
+      - vehicles
+      - crowd
+      - crowd_count
+      - vfx
+      - sfx
+      - costumes
+      - makeup
+      - stunts
+      - pyrotechnics
+      - special_equipment
+      - synopsis
+      - notes
+
+# Настройки LLM
+llm:
+  # Используемая модель (путь к локальной модели или имя из HuggingFace)
+  model_name: "mistralai/Mistral-7B-Instruct-v0.2"
+  
+  # Альтернативно можно использовать vllm для оптимизации
+  use_vllm: false
+  
+  # Устройство для инференса
+  device: "cuda"  # "cuda" или "cpu"
+  
+  # Параметры генерации
+  generation:
+    max_new_tokens: 1024
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 40
+    do_sample: true
+    
+  # Батчевая обработка
+  batch:
+    scene_detection_batch_size: 10
+    entity_extraction_batch_size: 8
+    
+  # Использование flash attention (если доступно)
+  use_flash_attention: true
+
+# Настройки парсинга
+parsing:
+  min_scene_length: 50
+  max_scene_length: 5000
+  scene_detection_confidence_threshold: 0.7
+
