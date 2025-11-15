@@ -221,8 +221,8 @@ class LLMEngine:
         if 'llama' in model_name or 'meta-llama' in model_name:
             # Формат для Llama 3
             return f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-        elif 'mistral' in model_name:
-            # Формат для Mistral Instruct
+        elif 'mistral' in model_name or 'mixtral' in model_name:
+            # Формат для Mistral/Mixtral Instruct
             return f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
         else:
             # Универсальный формат
@@ -366,12 +366,21 @@ class LLMEngine:
         if self.use_vllm:
             # Использование vllm для батчевой обработки
             gen_params = self.config.get('llm', {}).get('generation', {})
+            # Определяем stop tokens в зависимости от модели
+            model_name = self.config.get('llm', {}).get('model_name', '').lower()
+            if 'mistral' in model_name or 'mixtral' in model_name:
+                stop_tokens = ["</s>", "[INST]", "[/INST]", "\n\n\n"]
+            elif 'llama' in model_name or 'meta-llama' in model_name:
+                stop_tokens = ["<|eot_id|>", "</s>", "\n\n\n"]
+            else:
+                stop_tokens = ["</s>", "\n\n\n"]
+            
             sampling_params = SamplingParams(
                 max_tokens=gen_params.get('max_new_tokens', 2048),
                 temperature=gen_params.get('temperature', 0.05),
                 top_p=gen_params.get('top_p', 0.9),
                 top_k=gen_params.get('top_k', 40),
-                stop=["<|eot_id|>", "</s>", "\n\n\n"]
+                stop=stop_tokens
             )
             
             outputs = self.model.generate(prompts, sampling_params)

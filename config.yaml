@@ -149,10 +149,11 @@ presets:
 llm:
   # Используемая модель (путь к локальной модели или имя из HuggingFace)
   # Для GPU 80GB можно использовать более мощные модели:
-  # - "meta-llama/Llama-3-70B-Instruct" (лучшее качество, требует ~40GB)
-  # - "mistralai/Mistral-7B-Instruct-v0.2" (быстрее, требует ~14GB)
-  # - "mistralai/Mixtral-8x7B-Instruct-v0.1" (баланс качества и скорости, ~47GB)
-  model_name: "meta-llama/Llama-3-70B-Instruct"
+  # - "mistralai/Mixtral-8x7B-Instruct-v0.1" (отличное качество, доступна, ~47GB) - РЕКОМЕНДУЕТСЯ
+  # - "Qwen/Qwen2.5-72B-Instruct" (если доступна, ~40GB)
+  # - "mistralai/Mistral-7B-Instruct-v0.2" (быстрее, но меньше качество, ~14GB)
+  # - "meta-llama/Llama-3-70B-Instruct" (требует специальный доступ)
+  model_name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
   
   # Альтернативно можно использовать vllm для оптимизации
   use_vllm: false
@@ -171,7 +172,7 @@ llm:
   # Батчевая обработка
   batch:
     scene_detection_batch_size: 10
-    entity_extraction_batch_size: 4  # Уменьшено для более мощной модели
+    entity_extraction_batch_size: 6  # Оптимизировано для Mixtral-8x7B
     
   # Использование flash attention (если доступно)
   use_flash_attention: true
