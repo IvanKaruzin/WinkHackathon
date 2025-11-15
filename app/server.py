@@ -49,7 +49,7 @@ def index():
 @APP.route('/api/upload', methods=['POST'])
 def api_upload():
     """Accept uploaded file and return parsed scenes JSON."""
-    from app.screenplay_parser import read_docx, ScenarioParser, create_production_table
+    from screenplay_parser import read_docx, ScenarioParser, create_production_table
 
     if 'file' not in request.files:
         return jsonify({'error': 'file required'}), 400
@@ -128,7 +128,7 @@ def api_upload():
 def api_download():
     """Return last parsed data in requested format."""
     fmt = request.args.get('format', 'json').lower()
-    from app.screenplay_parser import create_production_table
+    from screenplay_parser import create_production_table
 
     if not _last_parsed['df_rows']:
         return jsonify({'error': 'no parsed data available; upload a file first'}), 400

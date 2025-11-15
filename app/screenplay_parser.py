@@ -58,14 +58,14 @@ class Config:
     
     # Параметры модели для M3 Pro
     MODEL_PARAMS = {
-        'n_ctx': 2048,
-        'n_batch': 512,
-        'n_threads': 8,
+        'n_ctx': 1024,
+        'n_batch': 128,
+        'n_threads': 4,
         'n_gpu_layers': 1,
         'use_mmap': True,
         'use_mlock': False,
         'seed': 42,
-        'verbose': False
+        'verbose': True
     }
     
     # Параметры генерации
