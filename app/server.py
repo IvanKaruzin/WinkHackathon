@@ -110,8 +110,8 @@ def api_upload():
     # Save in-memory for subsequent export
     _last_parsed['scenes'] = rows
 
-    # Build tabular rows for quick client consumption
-    df = create_production_table(scenes)
+    # Build tabular rows for quick client consumption with preset
+    df = create_production_table(scenes, preset=preset)
     rows_table = df.to_dict(orient='records')
     _last_parsed['df_rows'] = rows_table
 

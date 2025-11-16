@@ -437,11 +437,12 @@ def read_pdf(path: str) -> str:
 #  Экспорт в Excel
 # -----------------------------
 
-def create_production_table(scenes: List[SceneMetadata]) -> pd.DataFrame:
-    """Создает таблицу для КПП из списка сцен"""
+def create_production_table(scenes: List[SceneMetadata], preset: str = "full") -> pd.DataFrame:
+    """Создает таблицу для КПП из списка сцен с учетом пресета"""
     rows = []
     
     for scene in scenes:
+        # Базовые колонки (всегда присутствуют)
         row = {
             "Серия": scene.episode or "01",
             "Сцена": scene.scene_number,
@@ -449,21 +450,29 @@ def create_production_table(scenes: List[SceneMetadata]) -> pd.DataFrame:
             "Инт/Нат": scene.scene_type,
             "Объект": scene.location,
             "Подобъект": scene.sublocation,
-            "Синопсис": scene.synopsis[:200] if scene.synopsis else "",
-            "Персонажи": ", ".join(scene.characters[:8]) if scene.characters else "",
-            "Массовка": scene.extras,
-            "Кол-во массовки": scene.extras_count if scene.extras_count else "",
-            "Реквизит": ", ".join(scene.props[:8]) if scene.props else "",
-            "Игровой транспорт": ", ".join(scene.vehicles) if scene.vehicles else "",
-            "Художники": "",
-            "Грим": ", ".join(scene.makeup) if scene.makeup else "",
-            "Костюм": ", ".join(scene.costumes) if scene.costumes else "",
-            "Каскадеры": "Да" if scene.stunts else "",
-            "Пиротехника": "Да" if scene.pyrotechnics else "",
-            "Спец. оборудование": ", ".join(scene.special_equipment) if scene.special_equipment else "",
-            "Примечание": scene.notes,
-            "Уверенность": f"{scene.confidence_score:.0%}" if scene.confidence_score > 0 else ""
         }
+        
+        # Добавляем колонки в зависимости от пресета
+        if preset in ["basic", "extended", "full"]:
+            row["Синопсис"] = scene.synopsis[:200] if scene.synopsis else ""
+            row["Персонажи"] = ", ".join(scene.characters[:10]) if scene.characters else ""
+        
+        if preset in ["extended", "full"]:
+            row["Массовка"] = scene.extras
+            row["Кол-во массовки"] = scene.extras_count if scene.extras_count else ""
+            row["Реквизит"] = ", ".join(scene.props[:15]) if scene.props else ""
+            row["Игровой транспорт"] = ", ".join(scene.vehicles) if scene.vehicles else ""
+            row["VFX"] = ", ".join(scene.special_fx) if scene.special_fx else ""
+        
+        if preset == "full":
+            row["Грим"] = ", ".join(scene.makeup) if scene.makeup else ""
+            row["Костюм"] = ", ".join(scene.costumes) if scene.costumes else ""
+            row["Каскадеры"] = "Да" if scene.stunts else ""
+            row["Пиротехника"] = "Да" if scene.pyrotechnics else ""
+            row["Спец. оборудование"] = ", ".join(scene.special_equipment) if scene.special_equipment else ""
+            row["Примечание"] = scene.notes
+            row["Уверенность"] = f"{scene.confidence_score:.0%}" if scene.confidence_score > 0 else ""
+        
         rows.append(row)
     
     df = pd.DataFrame(rows)
@@ -686,8 +695,8 @@ def main():
         scenes = parser_obj.parse_screenplay(text)
         logger.info(f"✓ Обработано сцен: {len(scenes)}")
         
-        logger.info("📊 Создание таблицы production...")
-        df = create_production_table(scenes)
+        logger.info(f"📊 Создание таблицы КПП (пресет: {args.preset})...")
+        df = create_production_table(scenes, preset=args.preset)
         
         logger.info(f"💾 Сохранение в {args.output}...")
         export_to_excel(df, args.output)
