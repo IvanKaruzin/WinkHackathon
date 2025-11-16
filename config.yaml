@@ -144,7 +144,7 @@ llm:
   # - "Qwen/Qwen2.5-14B-Instruct" (отличное качество, ~8-9GB) - РЕКОМЕНДУЕТСЯ для 24GB
   # - "Qwen/Qwen2.5-7B-Instruct" (быстрее, ~4-5GB) - запасной вариант
   # - "mistralai/Mistral-7B-Instruct-v0.3" (быстро, ~4-5GB) - если Qwen недоступна
-  model_name: "Qwen/Qwen2.5-32B-Instruct"
+  model_name: "mistralai/Mistral-7B-Instruct-v0.3"
   
   # Использование vllm для оптимизации (РЕКОМЕНДУЕТСЯ для 24GB)
   use_vllm: false
@@ -161,9 +161,9 @@ llm:
     
   # Батчевая обработка
   batch:
-    scene_detection_batch_size: 5
-    entity_extraction_batch_size: 3 
-    
+    scene_detection_batch_size: 20
+    entity_extraction_batch_size: 6
+  
   # Использование flash attention (если доступно)
   use_flash_attention: true
 

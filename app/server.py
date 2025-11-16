@@ -52,7 +52,7 @@ def index():
 @APP.route('/api/upload', methods=['POST'])
 def api_upload():
     """Accept uploaded file and return parsed scenes JSON."""
-    from app.screenplay_parser import read_docx, read_pdf, ScenarioParser, create_production_table
+    from screenplay_parser import read_docx, read_pdf, ScenarioParser, create_production_table
 
     if 'file' not in request.files:
         return jsonify({'error': 'file required'}), 400
