@@ -153,7 +153,7 @@ llm:
   # - "Qwen/Qwen2.5-72B-Instruct" (если доступна, ~40GB)
   # - "mistralai/Mistral-7B-Instruct-v0.2" (быстрее, но меньше качество, ~14GB)
   # - "meta-llama/Llama-3-70B-Instruct" (требует специальный доступ)
-  model_name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+  model_name: "Qwen/Qwen2.5-72B-Instruct"
   
   # Альтернативно можно использовать vllm для оптимизации
   use_vllm: false
@@ -164,7 +164,7 @@ llm:
   # Параметры генерации
   generation:
     max_new_tokens: 1024  # Уменьшено для Mixtral-8x7B из-за ограничений памяти
-    temperature: 0.05  # Снижено для большей точности
+    temperature: 0.01  # Снижено для большей точности
     top_p: 0.9
     top_k: 40
     do_sample: true
