@@ -853,23 +853,8 @@
         <div class="results-section" id="results">
             <h2>📊 Результаты анализа</h2>
 
-            <div class="results-stats">
-                <div class="stat-card">
-                    <div class="stat-number">47</div>
-                    <div class="stat-label">Всего сцен</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">12</div>
-                    <div class="stat-label">Уникальных локаций</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">8</div>
-                    <div class="stat-label">Главных персонажей</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">24</div>
-                    <div class="stat-label">Типов оборудования</div>
-                </div>
+            <div class="results-stats" id="resultsStats">
+                <!-- Статистика будет заполнена динамически -->
             </div>
 
             <div class="table-responsive">
@@ -884,47 +869,8 @@
                             <th>Реквизит</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <tr>
-                            <td class="scene-number">1</td>
-                            <td>Кабинет режиссера</td>
-                            <td>День</td>
-                            <td>Режиссер, ассистент</td>
-                            <td>—</td>
-                            <td>Сценарий, чай</td>
-                        </tr>
-                        <tr>
-                            <td class="scene-number">2</td>
-                            <td>Улица</td>
-                            <td>Закат</td>
-                            <td>Главный герой</td>
-                            <td>толпа (20 чел.)</td>
-                            <td>Автомобиль</td>
-                        </tr>
-                        <tr>
-                            <td class="scene-number">3</td>
-                            <td>Интерьер кафе</td>
-                            <td>Ночь</td>
-                            <td>Два актера</td>
-                            <td>официанты (5 чел.)</td>
-                            <td>Столы, свечи, напитки</td>
-                        </tr>
-                        <tr>
-                            <td class="scene-number">4</td>
-                            <td>Парк</td>
-                            <td>Утро</td>
-                            <td>Героиня</td>
-                            <td>бегуны (10 чел.)</td>
-                            <td>Мобильный телефон</td>
-                        </tr>
-                        <tr>
-                            <td class="scene-number">5</td>
-                            <td>Лестница в подъезде</td>
-                            <td>Вечер</td>
-                            <td>Два актера</td>
-                            <td>—</td>
-                            <td>Портфель</td>
-                        </tr>
+                    <tbody id="resultsTableBody">
+                        <!-- Данные будут заполнены динамически -->
                     </tbody>
                 </table>
             </div>
@@ -1010,35 +956,6 @@
             progressTime.textContent = `Прошло времени: ${elapsed} сек`;
         }
 
-        // Этапы обработки с прогрессом
-        const processingStages = [
-            { percent: 10, text: "Загрузка модели...", stage: "Инициализация LLM модели" },
-            { percent: 20, text: "Анализ структуры...", stage: "Сегментация сценария на сцены" },
-            { percent: 40, text: "Обработка сцен...", stage: "Извлечение метаданных из сцен" },
-            { percent: 60, text: "Анализ локаций...", stage: "Определение мест и окружения" },
-            { percent: 75, text: "Идентификация персонажей...", stage: "Выявление действующих лиц" },
-            { percent: 85, text: "Извлечение реквизита...", stage: "Анализ предметов и оборудования" },
-            { percent: 95, text: "Формирование отчета...", stage: "Создание итоговой таблицы" },
-            { percent: 100, text: "Завершено!", stage: "Обработка успешно завершена" }
-        ];
-
-        function simulateProgress() {
-            let currentStage = 0;
-            
-            function nextStage() {
-                if (currentStage < processingStages.length) {
-                    const stage = processingStages[currentStage];
-                    updateProgress(stage.percent, stage.text, stage.stage);
-                    currentStage++;
-                    
-                    // Случайная задержка между этапами для реалистичности
-                    const delay = Math.random() * 2000 + 1000;
-                    setTimeout(nextStage, delay);
-                }
-            }
-            
-            nextStage();
-        }
 
         // Обновить функцию handleFileSelect
         async function handleFileSelect(event) {
@@ -1067,7 +984,7 @@
 
             // Показать прогресс
             showProgress();
-            simulateProgress();
+            updateProgress(5, "Загрузка файла...", "Отправка файла на сервер");
 
             // Show loading
             const processBtn = document.querySelector('.customization-section .hero-button');
@@ -1076,26 +993,37 @@
             processBtn.innerHTML = '<span class="loading"></span> Обработка...';
 
             try {
-                const resp = await fetch('/api/upload', { method: 'POST', body: form });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    throw new Error(err.error || resp.statusText);
+                // Шаг 1: Загрузка файла
+                const uploadResp = await fetch('/api/upload', { method: 'POST', body: form });
+                if (!uploadResp.ok) {
+                    const err = await uploadResp.json().catch(() => ({}));
+                    throw new Error(err.error || uploadResp.statusText);
                 }
-                const data = await resp.json();
+                const uploadData = await uploadResp.json();
+                updateProgress(20, "Файл загружен", "Начинаю обработку...");
+                
+                // Шаг 2: Обработка файла
+                updateProgress(30, "Обработка сценария...", "Парсинг и анализ");
+                const processResp = await fetch('/api/process', { method: 'POST' });
+                if (!processResp.ok) {
+                    const err = await processResp.json().catch(() => ({}));
+                    throw new Error(err.error || processResp.statusText);
+                }
+                const result = await processResp.json();
                 
                 // Завершить прогресс
                 updateProgress(100, "Завершено!", "Обработка успешно завершена");
                 setTimeout(() => {
                     hideProgress();
-                    renderResults(data);
-                }, 1000);
+                    renderResults(result);
+                }, 500);
                 
             } catch (e) {
                 console.error(e);
                 updateProgress(0, "Ошибка обработки", "Произошла ошибка");
                 setTimeout(() => {
                     hideProgress();
-                    alert('Ошибка при загрузке файла: ' + e.message);
+                    alert('Ошибка при обработке файла: ' + e.message);
                 }, 1000);
             } finally {
                 processBtn.disabled = false;
@@ -1140,53 +1068,6 @@
             }
         }
 
-        async function handleFileSelect(event) {
-            const files = event.target.files;
-            if (!files || files.length === 0) return;
-            const file = files[0];
-            const dropZone = document.getElementById('dropZone');
-            dropZone.innerHTML = `
-                <div class="drop-icon">⏳</div>
-                <h3>Файл выбран</h3>
-                <p>${file.name}</p>
-                <p style="font-size: 0.85rem; color: var(--text-light);">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
-            `;
-
-            // Auto-select full template if none selected
-            if (!selectedTemplate) {
-                selectedTemplate = 'full';
-                const fullCard = document.querySelectorAll('.template-card')[2]; // third card
-                if (fullCard) fullCard.classList.add('selected');
-            }
-
-            // Upload file to backend
-            const form = new FormData();
-            form.append('file', file);
-            form.append('template', selectedTemplate || 'full');
-
-            // Show loading
-            const processBtn = document.querySelector('.customization-section .hero-button');
-            const prevText = processBtn.innerHTML;
-            processBtn.disabled = true;
-            processBtn.innerHTML = '<span class="loading"></span> Обработка...';
-
-            try {
-                const resp = await fetch('/api/upload', { method: 'POST', body: form });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    alert('Ошибка загрузки: ' + (err.error || resp.statusText));
-                    return;
-                }
-                const data = await resp.json();
-                renderResults(data);
-            } catch (e) {
-                console.error(e);
-                alert('Ошибка при загрузке файла');
-            } finally {
-                processBtn.disabled = false;
-                processBtn.innerHTML = prevText;
-            }
-        }
 
         function selectTemplate(card, templateType) {
             document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
@@ -1197,63 +1078,10 @@
         // processFile is kept to allow manual start if user prefers (it triggers file input)
         function processFile() {
             const input = document.getElementById('fileInput');
-            if (!input.files || input.files.length === 0) {
+            if (input.files && input.files.length > 0) {
+                handleFileSelect({ target: input });
+            } else {
                 alert('Пожалуйста, выберите файл в разделе загрузки');
-                return;
-            }
-
-            // Show progress bar
-            document.querySelector('.progress-container').style.display = 'block';
-            const analyzeBtn = document.getElementById('analyzeBtn');
-            analyzeBtn.disabled = true;
-            analyzeBtn.textContent = 'Обработка...';
-
-            // Create SSE connection for progress updates
-            const eventSource = new EventSource('/api/progress');
-            
-            eventSource.onmessage = function(e) {
-                const data = JSON.parse(e.data);
-                document.querySelector('.progress-fill').style.width = data.progress + '%';
-                document.querySelector('.progress-text').textContent = data.stage;
-                
-                if (data.progress >= 100) {
-                    eventSource.close();
-                    processFile(input.files[0]);
-                }
-            };
-
-            eventSource.onerror = function() {
-                eventSource.close();
-                analyzeBtn.disabled = false;
-                analyzeBtn.textContent = 'Начать анализ';
-                alert('Ошибка соединения с сервером');
-            };
-        }
-
-        async function processFile(file) {
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                
-                const response = await fetch('/api/process', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    throw new Error(await response.text());
-                }
-                
-                const result = await response.json();
-                renderResults(result);
-                
-            } catch (error) {
-                console.error('Ошибка обработки:', error);
-                alert('Ошибка при обработке файла: ' + error.message);
-            } finally {
-                const analyzeBtn = document.getElementById('analyzeBtn');
-                analyzeBtn.disabled = false;
-                analyzeBtn.textContent = 'Начать анализ';
             }
         }
 
@@ -1302,29 +1130,69 @@
             document.getElementById('results').classList.add('active');
             document.getElementById('export').classList.add('active');
 
-            // Render stats
+            // Render stats dynamically
+            const statsContainer = document.getElementById('resultsStats');
+            statsContainer.innerHTML = '';
+            
             if (data.stats) {
-                const statCards = document.querySelectorAll('.results-stats .stat-card');
-                if (statCards[0]) statCards[0].querySelector('.stat-number').textContent = data.stats.total_scenes || 0;
-                if (statCards[1]) statCards[1].querySelector('.stat-number').textContent = data.stats.unique_locations || 0;
-                if (statCards[2]) statCards[2].querySelector('.stat-number').textContent = (data.stats.top_characters || []).length;
+                const stats = [
+                    { number: data.stats.total_scenes || 0, label: 'Всего сцен' },
+                    { number: data.stats.unique_locations || 0, label: 'Уникальных локаций' },
+                    { number: (data.stats.top_characters || []).length, label: 'Главных персонажей' },
+                    { number: data.stats.total_scenes || 0, label: 'Обработано сцен' }
+                ];
+                
+                stats.forEach(stat => {
+                    const statCard = document.createElement('div');
+                    statCard.className = 'stat-card';
+                    statCard.innerHTML = `
+                        <div class="stat-number">${stat.number}</div>
+                        <div class="stat-label">${stat.label}</div>
+                    `;
+                    statsContainer.appendChild(statCard);
+                });
             }
 
             // Render table
-            const tbody = document.querySelector('.results-table tbody');
+            const tbody = document.getElementById('resultsTableBody');
             tbody.innerHTML = '';
             const rows = data.table || [];
-            rows.forEach((r, i) => {
+            
+            if (rows.length === 0) {
                 const tr = document.createElement('tr');
-                const sceneTd = document.createElement('td'); sceneTd.className = 'scene-number'; sceneTd.textContent = r['Сцена'] || (i+1);
-                const locTd = document.createElement('td'); locTd.textContent = r['Объект'] || '';
-                const timeTd = document.createElement('td'); timeTd.textContent = r['Режим'] || '';
-                const charsTd = document.createElement('td'); charsTd.textContent = r['Персонажи'] || '';
-                const extrasTd = document.createElement('td'); extrasTd.textContent = r['Массовка'] || '';
-                const propsTd = document.createElement('td'); propsTd.textContent = r['Реквизит'] || '';
-                tr.appendChild(sceneTd); tr.appendChild(locTd); tr.appendChild(timeTd); tr.appendChild(charsTd); tr.appendChild(extrasTd); tr.appendChild(propsTd);
+                const td = document.createElement('td');
+                td.colSpan = 6;
+                td.textContent = 'Нет данных для отображения';
+                td.style.textAlign = 'center';
+                td.style.padding = '2rem';
+                td.style.color = 'var(--text-light)';
+                tr.appendChild(td);
                 tbody.appendChild(tr);
-            });
+            } else {
+                rows.forEach((r, i) => {
+                    const tr = document.createElement('tr');
+                    const sceneTd = document.createElement('td'); 
+                    sceneTd.className = 'scene-number'; 
+                    sceneTd.textContent = r['Сцена'] || (i+1);
+                    const locTd = document.createElement('td'); 
+                    locTd.textContent = r['Объект'] || '';
+                    const timeTd = document.createElement('td'); 
+                    timeTd.textContent = r['Режим'] || '';
+                    const charsTd = document.createElement('td'); 
+                    charsTd.textContent = r['Персонажи'] || '';
+                    const extrasTd = document.createElement('td'); 
+                    extrasTd.textContent = r['Массовка'] || '';
+                    const propsTd = document.createElement('td'); 
+                    propsTd.textContent = r['Реквизит'] || '';
+                    tr.appendChild(sceneTd); 
+                    tr.appendChild(locTd); 
+                    tr.appendChild(timeTd); 
+                    tr.appendChild(charsTd); 
+                    tr.appendChild(extrasTd); 
+                    tr.appendChild(propsTd);
+                    tbody.appendChild(tr);
+                });
+            }
 
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
