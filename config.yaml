@@ -148,31 +148,44 @@ presets:
 # Настройки LLM
 llm:
   # Используемая модель (путь к локальной модели или имя из HuggingFace)
+<<<<<<< HEAD
   # Для GPU 80GB можно использовать более мощные модели:
   # - "mistralai/Mixtral-8x7B-Instruct-v0.1" (отличное качество, доступна, ~47GB) - РЕКОМЕНДУЕТСЯ
   # - "Qwen/Qwen2.5-72B-Instruct" (если доступна, ~40GB)
   # - "mistralai/Mistral-7B-Instruct-v0.2" (быстрее, но меньше качество, ~14GB)
   # - "meta-llama/Llama-3-70B-Instruct" (требует специальный доступ)
   model_name: "Qwen/Qwen2.5-72B-Instruct"
+=======
+  # Для GPU 24GB оптимальные модели:
+  # - "Qwen/Qwen2.5-14B-Instruct" (отличное качество, ~8-9GB) - РЕКОМЕНДУЕТСЯ для 24GB
+  # - "Qwen/Qwen2.5-7B-Instruct" (быстрее, ~4-5GB) - запасной вариант
+  # - "mistralai/Mistral-7B-Instruct-v0.3" (быстро, ~4-5GB) - если Qwen недоступна
+  model_name: "Qwen/Qwen2.5-14B-Instruct"
+>>>>>>> 8dcd3b2 (qwen14B)
   
-  # Альтернативно можно использовать vllm для оптимизации
-  use_vllm: false
+  # Использование vllm для оптимизации (РЕКОМЕНДУЕТСЯ для 24GB)
+  use_vllm: true
   
   # Устройство для инференса
   device: "cuda"  # "cuda" или "cpu"
   
-  # Параметры генерации
+  # Параметры генерации (оптимизировано для 24GB VRAM)
   generation:
+<<<<<<< HEAD
     max_new_tokens: 1024  # Уменьшено для Mixtral-8x7B из-за ограничений памяти
     temperature: 0.01  # Снижено для большей точности
+=======
+    max_new_tokens: 512  # Уменьшено для экономии памяти на 24GB
+    temperature: 0.05  # Низкая температура для точности
+>>>>>>> 8dcd3b2 (qwen14B)
     top_p: 0.9
     top_k: 40
     do_sample: true
     
-  # Батчевая обработка
+  # Батчевая обработка (оптимизировано для 24GB)
   batch:
     scene_detection_batch_size: 10
-    entity_extraction_batch_size: 1  # Уменьшено из-за ограничений памяти Mixtral-8x7B
+    entity_extraction_batch_size: 4  # Увеличено для Qwen2.5-14B (можно 4-6)
     
   # Использование flash attention (если доступно)
   use_flash_attention: true

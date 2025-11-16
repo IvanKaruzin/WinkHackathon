@@ -218,7 +218,10 @@ class LLMEngine:
         model_name = self.config.get('llm', {}).get('model_name', '').lower()
         
         # Определяем формат промпта в зависимости от модели
-        if 'llama' in model_name or 'meta-llama' in model_name:
+        if 'qwen' in model_name:
+            # Формат для Qwen2.5
+            return f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
+        elif 'llama' in model_name or 'meta-llama' in model_name:
             # Формат для Llama 3
             return f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         elif 'mistral' in model_name or 'mixtral' in model_name:
@@ -363,12 +366,20 @@ class LLMEngine:
         if not self.model:
             raise RuntimeError("Модель не загружена")
         
+        # Мониторинг памяти перед генерацией
+        if self.device == 'cuda':
+            mem_allocated = torch.cuda.memory_allocated() / 1024**3
+            mem_reserved = torch.cuda.memory_reserved() / 1024**3
+            logger.info(f"GPU память до генерации: {mem_allocated:.2f}GB выделено, {mem_reserved:.2f}GB зарезервировано")
+        
         if self.use_vllm:
             # Использование vllm для батчевой обработки
             gen_params = self.config.get('llm', {}).get('generation', {})
             # Определяем stop tokens в зависимости от модели
             model_name = self.config.get('llm', {}).get('model_name', '').lower()
-            if 'mistral' in model_name or 'mixtral' in model_name:
+            if 'qwen' in model_name:
+                stop_tokens = ["<|im_end|>", "<|endoftext|>", "\n\n\n"]
+            elif 'mistral' in model_name or 'mixtral' in model_name:
                 stop_tokens = ["</s>", "[INST]", "[/INST]", "\n\n\n"]
             elif 'llama' in model_name or 'meta-llama' in model_name:
                 stop_tokens = ["<|eot_id|>", "</s>", "\n\n\n"]
@@ -376,7 +387,7 @@ class LLMEngine:
                 stop_tokens = ["</s>", "\n\n\n"]
             
             sampling_params = SamplingParams(
-                max_tokens=gen_params.get('max_new_tokens', 2048),
+                max_tokens=gen_params.get('max_new_tokens', 512),
                 temperature=gen_params.get('temperature', 0.05),
                 top_p=gen_params.get('top_p', 0.9),
                 top_k=gen_params.get('top_k', 40),
@@ -384,7 +395,14 @@ class LLMEngine:
             )
             
             outputs = self.model.generate(prompts, sampling_params)
-            return [output.outputs[0].text.strip() for output in outputs]
+            results = [output.outputs[0].text.strip() for output in outputs]
+            
+            # Очистка памяти после vllm
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            gc.collect()
+            
+            return results
         else:
             # Использование transformers
             gen_params = self.config.get('llm', {}).get('generation', {})
@@ -396,7 +414,7 @@ class LLMEngine:
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=2048  # Уменьшено для экономии памяти
+                max_length=1024  # Уменьшено для 24GB VRAM
             ).to(self.device)
             
             logger.info(f"Размер батча: {inputs['input_ids'].shape}, начинаю генерацию...")
@@ -405,7 +423,7 @@ class LLMEngine:
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=min(gen_params.get('max_new_tokens', 2048), 1024),  # Ограничено до 1024
+                    max_new_tokens=gen_params.get('max_new_tokens', 512),
                     temperature=gen_params.get('temperature', 0.05),
                     top_p=gen_params.get('top_p', 0.9),
                     top_k=gen_params.get('top_k', 40),
@@ -426,6 +444,19 @@ class LLMEngine:
                     skip_special_tokens=True
                 )
                 responses.append(generated_text.strip())
+            
+            # КРИТИЧЕСКОЕ: Очистка памяти для предотвращения утечек
+            del inputs
+            del outputs
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            gc.collect()
+            
+            # Мониторинг памяти после генерации
+            if self.device == 'cuda':
+                mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                logger.info(f"GPU память после генерации: {mem_allocated:.2f}GB выделено, {mem_reserved:.2f}GB зарезервировано")
             
             return responses
     
@@ -690,8 +721,8 @@ class LLMEngine:
             # Генерируем промпты для батча
             prompts = []
             for scene in batch:
-                # Ограничиваем длину текста сцены для экономии памяти
-                scene_text_limited = scene.scene_text[:2000] if len(scene.scene_text) > 2000 else scene.scene_text
+                # Ограничиваем длину текста сцены для экономии памяти (для 24GB VRAM)
+                scene_text_limited = scene.scene_text[:1000] if len(scene.scene_text) > 1000 else scene.scene_text
                 prompt = self._generate_entity_extraction_prompt(
                     scene_text_limited,
                     scene.scene_number,
