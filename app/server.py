@@ -131,6 +131,31 @@ def api_upload():
 
     return jsonify({'scenes': rows, 'table': rows_table, 'stats': stats})
 
+# Добавить в server.py (опционально для реального прогресса)
+@APP.route('/api/upload_progress')
+def upload_progress():
+    def generate():
+        # Эмуляция прогресса обработки
+        stages = [
+            "Инициализация модели...",
+            "Сегментация сценария...", 
+            "Обработка сцен...",
+            "Анализ локаций...",
+            "Извлечение метаданных...",
+            "Формирование отчета..."
+        ]
+        
+        for i, stage in enumerate(stages):
+            progress = int((i + 1) / len(stages) * 100)
+            data = json.dumps({
+                'progress': progress,
+                'stage': stage,
+                'message': f'Обработано {i + 1} из {len(stages)} этапов'
+            })
+            yield f"data: {data}\n\n"
+            time.sleep(2)  # Имитация задержки
+    
+    return Response(generate(), mimetype='text/event-stream')
 
 @APP.route('/api/download')
 def api_download():

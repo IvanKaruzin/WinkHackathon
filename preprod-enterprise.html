@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ScenePrepAI Enterprise - Препродакшн Документация</title>
+    <title>FilmHammer Enterprise - Препродакшн Документация</title>
     <style>
         * {
             margin: 0;
@@ -20,6 +20,76 @@
             --border-color: #E5E7EB;
             --hover-color: #F3F4F6;
             --success-color: #10B981;
+        }
+
+                /* Добавить в секцию стилей */
+        .progress-section {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            border-left: 4px solid var(--primary-end);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        #progressText {
+            color: var(--text-dark);
+        }
+
+        #progressPercent {
+            color: var(--primary-end);
+            font-weight: 700;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-start), var(--primary-end));
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            color: var(--text-light);
+        }
+
+        .progress-stage {
+            flex: 1;
+        }
+
+        .progress-time {
+            text-align: right;
+        }
+
+        /* Анимация пульсации для активного процесса */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .progress-section.processing {
+            animation: pulse 2s infinite;
         }
 
         body {
@@ -556,7 +626,7 @@
     <!-- Header -->
     <header>
         <div class="header-content">
-            <div class="logo">🎬 ScenePrepAI Enterprise</div>
+            <div class="logo">🎬 FilmHammer Enterprise</div>
             <nav>
                 <a href="#dashboard">Dashboard</a>
                 <a href="#upload">Загрузить</a>
@@ -610,7 +680,7 @@
             <div class="templates-grid">
                 <!-- Template 1: Basic -->
                 <div class="template-card" onclick="selectTemplate(this, 'basic')">
-                    <div class="template-level">БАЗОВЫЙ ⚡⚡⚡</div>
+                    <div class="template-level">БАЗОВЫЙ ⚡</div>
                     <h3>Базовый анализ</h3>
                     <p><strong>7 колонок:</strong> Сцены, локации, время суток, персонажи, синопсис</p>
                     <p style="font-size: 0.85rem; margin-top: 0.5rem;">
@@ -636,7 +706,7 @@
 
                 <!-- Template 3: Full -->
                 <div class="template-card selected" onclick="selectTemplate(this, 'full')">
-                    <div class="template-level">ПОЛНЫЙ ⭐⭐⭐</div>
+                    <div class="template-level">ПОЛНЫЙ ⚡⚡⚡</div>
                     <h3>Полный анализ</h3>
                     <p><strong>20 колонок:</strong> Максимальная детализация - костюмы, грим, каскадеры, пиротехника</p>
                     <p style="font-size: 0.85rem; margin-top: 0.5rem;">
@@ -705,6 +775,21 @@
                 <button class="hero-button" style="background: linear-gradient(135deg, var(--primary-start) 0%, var(--primary-end) 100%); width: 100%; color: white; margin-top: 1rem;" onclick="processFile()">
                     🚀 Начать обработку файла
                 </button>
+            </div>
+
+            <div class="progress-section" id="progressSection" style="display: none; margin-top: 2rem;">
+                <h3>🔄 Обработка сценария</h3>
+                <div class="progress-info">
+                    <span id="progressText">Подготовка к анализу...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-details" id="progressDetails">
+                    <div class="progress-stage" id="currentStage">Инициализация модели...</div>
+                    <div class="progress-time" id="progressTime">Прошло времени: 0 сек</div>
+                </div>
             </div>
         </div>
 
@@ -804,7 +889,7 @@
 
     <!-- Footer -->
     <footer>
-        <p>&copy; 2025 ScenePrepAI Enterprise. Часть платформы Wink.</p>
+        <p>&copy; 2025 FilmHammer Enterprise. Часть платформы Wink.</p>
         <p>
             <a href="#docs">Документация</a> | 
             <a href="#support">Поддержка</a> | 
@@ -815,6 +900,162 @@
 
     <script>
         let selectedTemplate = null;
+
+                // Добавить в секцию JavaScript
+        let progressInterval;
+        let startTime;
+
+        function showProgress() {
+            const progressSection = document.getElementById('progressSection');
+            progressSection.style.display = 'block';
+            progressSection.classList.add('processing');
+            
+            // Прокрутить к прогрессу
+            progressSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            startTime = Date.now();
+            updateProgressTime();
+            
+            // Запустить обновление времени
+            progressInterval = setInterval(updateProgressTime, 1000);
+        }
+
+        function hideProgress() {
+            const progressSection = document.getElementById('progressSection');
+            progressSection.style.display = 'none';
+            progressSection.classList.remove('processing');
+            
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+        }
+
+        function updateProgress(percent, text, stage) {
+            const progressFill = document.getElementById('progressFill');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressText = document.getElementById('progressText');
+            const currentStage = document.getElementById('currentStage');
+            
+            progressFill.style.width = percent + '%';
+            progressPercent.textContent = percent + '%';
+            progressText.textContent = text;
+            
+            if (stage) {
+                currentStage.textContent = stage;
+            }
+        }
+
+        function updateProgressTime() {
+            if (!startTime) return;
+            
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const progressTime = document.getElementById('progressTime');
+            progressTime.textContent = `Прошло времени: ${elapsed} сек`;
+        }
+
+        // Этапы обработки с прогрессом
+        const processingStages = [
+            { percent: 10, text: "Загрузка модели...", stage: "Инициализация LLM модели" },
+            { percent: 20, text: "Анализ структуры...", stage: "Сегментация сценария на сцены" },
+            { percent: 40, text: "Обработка сцен...", stage: "Извлечение метаданных из сцен" },
+            { percent: 60, text: "Анализ локаций...", stage: "Определение мест и окружения" },
+            { percent: 75, text: "Идентификация персонажей...", stage: "Выявление действующих лиц" },
+            { percent: 85, text: "Извлечение реквизита...", stage: "Анализ предметов и оборудования" },
+            { percent: 95, text: "Формирование отчета...", stage: "Создание итоговой таблицы" },
+            { percent: 100, text: "Завершено!", stage: "Обработка успешно завершена" }
+        ];
+
+        function simulateProgress() {
+            let currentStage = 0;
+            
+            function nextStage() {
+                if (currentStage < processingStages.length) {
+                    const stage = processingStages[currentStage];
+                    updateProgress(stage.percent, stage.text, stage.stage);
+                    currentStage++;
+                    
+                    // Случайная задержка между этапами для реалистичности
+                    const delay = Math.random() * 2000 + 1000;
+                    setTimeout(nextStage, delay);
+                }
+            }
+            
+            nextStage();
+        }
+
+        // Обновить функцию handleFileSelect
+        async function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            const dropZone = document.getElementById('dropZone');
+            dropZone.innerHTML = `
+                <div class="drop-icon">⏳</div>
+                <h3>Файл выбран</h3>
+                <p>${file.name}</p>
+                <p style="font-size: 0.85rem; color: var(--text-light);">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
+            `;
+
+            // Auto-select full template if none selected
+            if (!selectedTemplate) {
+                selectedTemplate = 'full';
+                const fullCard = document.querySelectorAll('.template-card')[2];
+                if (fullCard) fullCard.classList.add('selected');
+            }
+
+            // Upload file to backend
+            const form = new FormData();
+            form.append('file', file);
+            form.append('template', selectedTemplate || 'full');
+
+            // Показать прогресс
+            showProgress();
+            simulateProgress();
+
+            // Show loading
+            const processBtn = document.querySelector('.customization-section .hero-button');
+            const prevText = processBtn.innerHTML;
+            processBtn.disabled = true;
+            processBtn.innerHTML = '<span class="loading"></span> Обработка...';
+
+            try {
+                const resp = await fetch('/api/upload', { method: 'POST', body: form });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error || resp.statusText);
+                }
+                const data = await resp.json();
+                
+                // Завершить прогресс
+                updateProgress(100, "Завершено!", "Обработка успешно завершена");
+                setTimeout(() => {
+                    hideProgress();
+                    renderResults(data);
+                }, 1000);
+                
+            } catch (e) {
+                console.error(e);
+                updateProgress(0, "Ошибка обработки", "Произошла ошибка");
+                setTimeout(() => {
+                    hideProgress();
+                    alert('Ошибка при загрузке файла: ' + e.message);
+                }, 1000);
+            } finally {
+                processBtn.disabled = false;
+                processBtn.innerHTML = prevText;
+            }
+        }
+
+        // Обновить функцию processFile
+        function processFile() {
+            const input = document.getElementById('fileInput');
+            if (input.files && input.files.length > 0) {
+                handleFileSelect({ target: input });
+            } else {
+                alert('Пожалуйста, выберите файл в разделе загрузки');
+            }
+        }
 
         function scrollToUpload() {
             document.getElementById('upload').scrollIntoView({ behavior: 'smooth' });
