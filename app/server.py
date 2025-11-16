@@ -51,9 +51,7 @@ def index():
 
 @APP.route('/api/upload', methods=['POST'])
 def api_upload():
-    """Accept uploaded file and return parsed scenes JSON."""
-    from screenplay_parser import read_docx, read_pdf, ScenarioParser, create_production_table
-
+    """Accept uploaded file and store it for later processing."""
     if 'file' not in request.files:
         return jsonify({'error': 'file required'}), 400
 
@@ -64,35 +62,41 @@ def api_upload():
     saved_path = save_dir / filename
     f.save(str(saved_path))
 
-    # Use template/preset selection (basic, extended, full)
-    preset = request.form.get('template', 'full')
+    # Store file info for processing
+    _last_parsed['file_path'] = str(saved_path)
+    _last_parsed['preset'] = request.form.get('template', 'full')
+    _last_parsed['config_path'] = request.form.get('config', 'config.yaml')
+    
+    return jsonify({'status': 'file_uploaded', 'filename': filename})
+
+@APP.route('/api/process', methods=['POST'])
+def api_process():
+    """Process the uploaded file and return parsed scenes JSON."""
+    from screenplay_parser import read_docx, read_pdf, ScenarioParser, create_production_table
+    
+    if 'file_path' not in _last_parsed:
+        return jsonify({'error': 'no file uploaded'}), 400
+
+    saved_path = Path(_last_parsed['file_path'])
+    preset = _last_parsed['preset']
     if preset not in ['basic', 'extended', 'full']:
         preset = 'full'
     
-    config_path = request.form.get('config', 'config.yaml')
-    # Полный путь к конфигу
+    config_path = _last_parsed['config_path']
     config_full_path = str(ROOT / config_path) if not os.path.isabs(config_path) else config_path
 
-    # Determine file type and extract text accordingly
+    # Determine file type and extract text
     suffix = saved_path.suffix.lower()
     text = ''
     try:
         if suffix == '.pdf':
-            # Use pdfplumber to extract text
-            try:
-                text = read_pdf(str(saved_path))
-            except Exception as e:
-                return jsonify({'error': f'failed to read PDF: {e}'}), 500
+            text = read_pdf(str(saved_path))
         else:
-            # default: try docx reader
-            try:
-                text = read_docx(str(saved_path))
-            except Exception as e:
-                return jsonify({'error': f'failed to read uploaded file: {e}'}), 500
+            text = read_docx(str(saved_path))
     except Exception as e:
-        return jsonify({'error': f'unexpected error reading file: {e}'}), 500
+        return jsonify({'error': f'failed to read file: {e}'}), 500
 
-    # Initialize parser with preset
+    # Initialize parser and process
     try:
         parser = ScenarioParser(config_path=config_full_path, preset=preset)
         scenes = parser.parse_screenplay(text)
@@ -131,30 +135,31 @@ def api_upload():
 
     return jsonify({'scenes': rows, 'table': rows_table, 'stats': stats})
 
-# Добавить в server.py (опционально для реального прогресса)
-@APP.route('/api/upload_progress')
-def upload_progress():
+@APP.route('/api/progress')
+def progress():
+    """SSE endpoint for processing progress updates."""
     def generate():
-        # Эмуляция прогресса обработки
+        from screenplay_parser import SceneMetadata
+        
+        # Get processing stages from parser
         stages = [
-            "Инициализация модели...",
-            "Сегментация сценария...", 
-            "Обработка сцен...",
-            "Анализ локаций...",
-            "Извлечение метаданных...",
-            "Формирование отчета..."
+            ("Загрузка файла", 10),
+            ("Анализ структуры", 20),
+            ("Извлечение сцен", 30),
+            ("Обработка метаданных", 60),
+            ("Формирование отчета", 90),
+            ("Готово", 100)
         ]
         
-        for i, stage in enumerate(stages):
-            progress = int((i + 1) / len(stages) * 100)
+        for stage, progress in stages:
             data = json.dumps({
                 'progress': progress,
                 'stage': stage,
-                'message': f'Обработано {i + 1} из {len(stages)} этапов'
+                'message': f'{stage}...'
             })
             yield f"data: {data}\n\n"
-            time.sleep(2)  # Имитация задержки
-    
+            time.sleep(1)  # Simulate processing time
+            
     return Response(generate(), mimetype='text/event-stream')
 
 @APP.route('/api/download')

@@ -257,6 +257,62 @@
             cursor: pointer;
             transition: all 0.3s;
             background-color: var(--hover-color);
+            margin-bottom: 1.5rem;
+        }
+
+        .upload-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .analyze-btn {
+            background: linear-gradient(135deg, var(--primary-start) 0%, var(--primary-end) 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            flex: 1;
+        }
+
+        .analyze-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: var(--border-color);
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .progress-container {
+            display: none;
+            margin-top: 1.5rem;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background-color: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-start), var(--primary-end));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.9rem;
+            color: var(--text-light);
+            display: flex;
+            justify-content: space-between;
         }
 
         .drop-zone:hover {
