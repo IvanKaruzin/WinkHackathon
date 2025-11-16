@@ -1197,10 +1197,63 @@
         // processFile is kept to allow manual start if user prefers (it triggers file input)
         function processFile() {
             const input = document.getElementById('fileInput');
-            if (input.files && input.files.length > 0) {
-                handleFileSelect({ target: input });
-            } else {
+            if (!input.files || input.files.length === 0) {
                 alert('Пожалуйста, выберите файл в разделе загрузки');
+                return;
+            }
+
+            // Show progress bar
+            document.querySelector('.progress-container').style.display = 'block';
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Обработка...';
+
+            // Create SSE connection for progress updates
+            const eventSource = new EventSource('/api/progress');
+            
+            eventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                document.querySelector('.progress-fill').style.width = data.progress + '%';
+                document.querySelector('.progress-text').textContent = data.stage;
+                
+                if (data.progress >= 100) {
+                    eventSource.close();
+                    processFile(input.files[0]);
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Начать анализ';
+                alert('Ошибка соединения с сервером');
+            };
+        }
+
+        async function processFile(file) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('/api/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+                
+                const result = await response.json();
+                renderResults(result);
+                
+            } catch (error) {
+                console.error('Ошибка обработки:', error);
+                alert('Ошибка при обработке файла: ' + error.message);
+            } finally {
+                const analyzeBtn = document.getElementById('analyzeBtn');
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Начать анализ';
             }
         }
 
