@@ -478,8 +478,28 @@ class LLMEngine:
                 # Удаляем комментарии
                 json_str = re.sub(r'//.*?$', '', json_str, flags=re.MULTILINE)
                 json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+                
+                # Исправляем незакрытые кавычки и скобки
+                # Добавляем закрывающую скобку если её нет
+                if json_str.count('{') > json_str.count('}'):
+                    json_str += '}'
+                if json_str.count('[') > json_str.count(']'):
+                    json_str += ']'
+                
                 # Исправляем незакрытые строки
-                json_str = re.sub(r'"([^"]*)$', r'"\1"', json_str)
+                lines = json_str.split('\n')
+                fixed_lines = []
+                for line in lines:
+                    # Если строка содержит нечетное количество кавычек, добавляем закрывающую
+                    if line.count('"') % 2 != 0:
+                        line += '"'
+                    fixed_lines.append(line)
+                json_str = '\n'.join(fixed_lines)
+                
+                # Убираем trailing commas еще раз
+                json_str = re.sub(r',\s*}', '}', json_str)
+                json_str = re.sub(r',\s*]', ']', json_str)
+                
                 return json.loads(json_str)
             except json.JSONDecodeError as e2:
                 logger.warning(f"Не удалось распарсить JSON: {e2}. Начало текста: {json_str[:300]}")
@@ -558,12 +578,13 @@ class LLMEngine:
             else:
                 end = len(text)
             
-            # Извлекаем номер сцены
-            scene_number = match.group('number')
-            if not scene_number:
-                scene_number = str(i + 1)
-            else:
-                scene_number = scene_number.strip().rstrip('.')
+            # Извлекаем номер сцены - используем последовательную нумерацию
+            scene_number = str(i + 1)
+            
+            # Если в тексте есть номер, сохраняем его как оригинальный
+            original_number = match.group('number')
+            if original_number:
+                original_number = original_number.strip().rstrip('.')
             
             # Извлекаем тип сцены
             scene_type = match.group('type') or ''

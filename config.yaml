@@ -83,11 +83,6 @@ entity_types:
     type: "list"
     required: false
     
-  synopsis:
-    description: "Краткое описание сцены"
-    type: "string"
-    required: false
-    
   notes:
     description: "Дополнительные примечания к сцене"
     type: "string"
@@ -104,7 +99,6 @@ presets:
       - time_of_day
       - scene_type
       - characters
-      - synopsis
       
   extended:
     name: "Расширенный"
@@ -120,7 +114,6 @@ presets:
       - crowd
       - crowd_count
       - vfx
-      - synopsis
       
   full:
     name: "Полный"
@@ -142,7 +135,6 @@ presets:
       - stunts
       - pyrotechnics
       - special_equipment
-      - synopsis
       - notes
 
 # Настройки LLM

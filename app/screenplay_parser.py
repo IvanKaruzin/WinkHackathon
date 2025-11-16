@@ -61,7 +61,6 @@ class SceneMetadata:
     location: str = ""
     sublocation: str = ""
     time_of_day: str = ""
-    synopsis: str = ""
     characters: List[str] = field(default_factory=list)
     extras: str = ""
     extras_count: int = 0
@@ -437,42 +436,61 @@ def read_pdf(path: str) -> str:
 #  Экспорт в Excel
 # -----------------------------
 
-def create_production_table(scenes: List[SceneMetadata], preset: str = "full") -> pd.DataFrame:
-    """Создает таблицу для КПП из списка сцен с учетом пресета"""
+def create_production_table(scenes: List[SceneMetadata], preset: str = "full", custom_columns: Optional[List[str]] = None) -> pd.DataFrame:
+    """Создает таблицу для КПП из списка сцен с учетом пресета или кастомных колонок
+    
+    Args:
+        scenes: Список сцен с метаданными
+        preset: Пресет ("basic", "extended", "full") - игнорируется если указаны custom_columns
+        custom_columns: Список кастомных колонок для включения в таблицу
+    """
     rows = []
     
+    # Маппинг названий колонок на поля SceneMetadata
+    column_mapping = {
+        "Серия": lambda s: s.episode or "01",
+        "Сцена": lambda s: s.scene_number,
+        "Режим": lambda s: s.time_of_day,
+        "Инт/Нат": lambda s: s.scene_type,
+        "Объект": lambda s: s.location,
+        "Подобъект": lambda s: s.sublocation,
+        "Персонажи": lambda s: ", ".join(s.characters[:10]) if s.characters else "",
+        "Массовка": lambda s: s.extras,
+        "Кол-во массовки": lambda s: s.extras_count if s.extras_count else "",
+        "Реквизит": lambda s: ", ".join(s.props[:15]) if s.props else "",
+        "Игровой транспорт": lambda s: ", ".join(s.vehicles) if s.vehicles else "",
+        "VFX": lambda s: ", ".join(s.special_fx) if s.special_fx else "",
+        "Грим": lambda s: ", ".join(s.makeup) if s.makeup else "",
+        "Костюм": lambda s: ", ".join(s.costumes) if s.costumes else "",
+        "Каскадеры": lambda s: "Да" if s.stunts else "",
+        "Пиротехника": lambda s: "Да" if s.pyrotechnics else "",
+        "Спец. оборудование": lambda s: ", ".join(s.special_equipment) if s.special_equipment else "",
+        "Примечание": lambda s: s.notes,
+        "Уверенность": lambda s: f"{s.confidence_score:.0%}" if s.confidence_score > 0 else ""
+    }
+    
+    # Определяем какие колонки включать
+    if custom_columns:
+        # Используем кастомные колонки
+        columns_to_include = custom_columns
+    else:
+        # Используем пресет
+        if preset == "basic":
+            columns_to_include = ["Серия", "Сцена", "Режим", "Инт/Нат", "Объект", "Подобъект", "Персонажи"]
+        elif preset == "extended":
+            columns_to_include = ["Серия", "Сцена", "Режим", "Инт/Нат", "Объект", "Подобъект", "Персонажи",
+                                "Массовка", "Кол-во массовки", "Реквизит", "Игровой транспорт", "VFX"]
+        else:  # full
+            columns_to_include = list(column_mapping.keys())
+    
+    # Создаем строки
     for scene in scenes:
-        # Базовые колонки (всегда присутствуют)
-        row = {
-            "Серия": scene.episode or "01",
-            "Сцена": scene.scene_number,
-            "Режим": scene.time_of_day,
-            "Инт/Нат": scene.scene_type,
-            "Объект": scene.location,
-            "Подобъект": scene.sublocation,
-        }
-        
-        # Добавляем колонки в зависимости от пресета
-        if preset in ["basic", "extended", "full"]:
-            row["Синопсис"] = scene.synopsis[:200] if scene.synopsis else ""
-            row["Персонажи"] = ", ".join(scene.characters[:10]) if scene.characters else ""
-        
-        if preset in ["extended", "full"]:
-            row["Массовка"] = scene.extras
-            row["Кол-во массовки"] = scene.extras_count if scene.extras_count else ""
-            row["Реквизит"] = ", ".join(scene.props[:15]) if scene.props else ""
-            row["Игровой транспорт"] = ", ".join(scene.vehicles) if scene.vehicles else ""
-            row["VFX"] = ", ".join(scene.special_fx) if scene.special_fx else ""
-        
-        if preset == "full":
-            row["Грим"] = ", ".join(scene.makeup) if scene.makeup else ""
-            row["Костюм"] = ", ".join(scene.costumes) if scene.costumes else ""
-            row["Каскадеры"] = "Да" if scene.stunts else ""
-            row["Пиротехника"] = "Да" if scene.pyrotechnics else ""
-            row["Спец. оборудование"] = ", ".join(scene.special_equipment) if scene.special_equipment else ""
-            row["Примечание"] = scene.notes
-            row["Уверенность"] = f"{scene.confidence_score:.0%}" if scene.confidence_score > 0 else ""
-        
+        row = {}
+        for col in columns_to_include:
+            if col in column_mapping:
+                row[col] = column_mapping[col](scene)
+            else:
+                row[col] = ""
         rows.append(row)
     
     df = pd.DataFrame(rows)
