@@ -136,7 +136,7 @@ def api_upload():
 def api_download():
     """Return last parsed data in requested format."""
     fmt = request.args.get('format', 'json').lower()
-    from app.screenplay_parser import create_production_table
+    from screenplay_parser import create_production_table
 
     if not _last_parsed['df_rows']:
         return jsonify({'error': 'no parsed data available; upload a file first'}), 400
